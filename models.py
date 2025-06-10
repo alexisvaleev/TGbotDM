@@ -6,13 +6,16 @@ from datetime import datetime
 
 Base = declarative_base()
 
+from sqlalchemy import BigInteger
+
 class User(Base):
     __tablename__ = 'users'
 
     id = Column(Integer, primary_key=True)
-    tg_id = Column(Integer, unique=True, nullable=False)  # Telegram ID
+    tg_id = Column(BigInteger, unique=True, nullable=False)  # Изменено на BigInteger
     role = Column(String, nullable=False)  # 'admin', 'teacher', 'student'
     group_id = Column(Integer, ForeignKey('groups.id'), nullable=True)
+
 
 class Group(Base):
     __tablename__ = 'groups'
