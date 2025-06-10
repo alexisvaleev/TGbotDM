@@ -56,10 +56,13 @@ class UserPollProgress(Base):
     poll_id = Column(Integer, ForeignKey('polls.id'), nullable=False)
     is_completed = Column(Boolean, default=False)
 
+from sqlalchemy import BigInteger
+
 class UserAnswer(Base):
     __tablename__ = 'user_answers'
 
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    user_id = Column(BigInteger, ForeignKey('users.id'), nullable=False)  # Изменили на BigInteger
     question_id = Column(Integer, ForeignKey('questions.id'), nullable=False)
     answer_text = Column(Text, nullable=False)
+

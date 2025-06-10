@@ -24,7 +24,7 @@ def get_user_keyboard():
 
 
 async def cmd_start(message: types.Message, state: FSMContext):
-    print("📥 /start от:", message.from_user.id)
+    print(f"📥 /start от: {message.from_user.id}")
     await message.answer(f"Ваш Telegram ID: {message.from_user.id}")
     user_id = message.from_user.id
 
@@ -61,6 +61,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
             # Если пользователь обычный студент/учитель
             kb = ReplyKeyboardMarkup(resize_keyboard=True)
             kb.add(KeyboardButton("📋 Пройти опрос"))
+            print(f"User role: {user.role}, button added")
             await message.answer("Выберите действие:", reply_markup=kb)
         else:
             await message.answer("Ваш аккаунт не зарегистрирован для использования бота.")
