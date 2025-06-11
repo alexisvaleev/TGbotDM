@@ -95,6 +95,7 @@ async def _send_main_menu(message: types.Message, role: str):
         kb.add(KeyboardButton("📊 Статистика"))
         kb.add(KeyboardButton("➕ Создать опрос"), KeyboardButton("🗑 Удалить опрос"))
         kb.add(KeyboardButton("📥 Экспорт результатов"))
+        kb.add(KeyboardButton("✏️ Редактировать опрос"))
         kb.add(KeyboardButton("👥 Управление пользователями"))
     elif role in ("teacher", "student"):
         kb.add(KeyboardButton("📋 Пройти опрос"))

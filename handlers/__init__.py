@@ -1,7 +1,7 @@
 from aiogram import Dispatcher
 from .poll_management import register_poll_management
-
-
+from .poll_editor import register_poll_editor
+from .poll_edit import register_poll_edit
 from .start import cmd_start, add_users_to_db
 from .poll_creation import register_poll_creation
 from .poll_taking import (
@@ -19,6 +19,7 @@ def register_handlers(dp: Dispatcher):
     # Создание опросов
     register_poll_creation(dp)
     register_poll_management(dp)
+    register_poll_editor(dp)
     # Прохождение опросов
     dp.register_message_handler(start_poll_taking, text="📋 Пройти опрос", state="*")
     dp.register_message_handler(choose_poll, state="PollTaking:choosing_poll")
