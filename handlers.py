@@ -2,6 +2,7 @@ from aiogram import types
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.dispatcher import FSMContext
 from database import AsyncSessionLocal
+from handlers import StudentPollStates
 from models import User, Poll, Question, Answer, UserPollProgress, UserAnswer
 from sqlalchemy.future import select
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
