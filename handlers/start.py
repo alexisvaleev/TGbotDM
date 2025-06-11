@@ -1,6 +1,4 @@
-import os
 from dotenv import load_dotenv
-
 from aiogram import types
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
@@ -92,12 +90,13 @@ async def process_group_choice(message: types.Message, state: FSMContext):
 async def _send_main_menu(message: types.Message, role: str):
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
     if role == "admin":
-        kb.add(KeyboardButton("📊 Статистика"))
+        # kb.add(KeyboardButton("📊 Статистика"))
         kb.add(KeyboardButton("➕ Создать опрос"), KeyboardButton("🗑 Удалить опрос"))
         kb.add(KeyboardButton("📥 Экспорт результатов"))
         kb.add(KeyboardButton("✏️ Редактировать опрос"))
-        kb.add(KeyboardButton("👥 Управление пользователями"))
+        # kb.add(KeyboardButton("👥 Управление пользователями"))
     elif role in ("teacher", "student"):
+
         kb.add(KeyboardButton("📋 Пройти опрос"))
     else:
         return await message.answer("⛔ У вас нет прав для использования бота.")

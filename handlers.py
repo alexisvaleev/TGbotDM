@@ -14,43 +14,37 @@ class PollTaking(StatesGroup):
 user_poll_state = {}
 
 async def start_poll_taking(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
+    # 1) Сбрасываем старые состояния и убираем клавиатуру
+    await state.finish()
+    await message.answer("Ищем доступные опросы…", reply_markup=ReplyKeyboardRemove())
 
-    # Отладочный вывод
-    print(f"start_poll_taking: {user_id}")
-
+    # 2) Загружаем список доступных опросов
+    tg_id = message.from_user.id
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(User).where(User.tg_id == user_id))
-        user = result.scalar()
+        user = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar()
+        if not user:
+            return await message.answer("❌ Сначала зарегистрируйтесь через /start.")
 
-        # Получаем список опросов, которые доступны пользователю
-        completed_result = await session.execute(
-            select(UserPollProgress.poll_id).where(
-                UserPollProgress.user_id == user.id,
-                UserPollProgress.is_completed == True,
-            )
-        )
-        completed_poll_ids = [row[0] for row in completed_result.fetchall()]
-
-        polls_result = await session.execute(
+        polls = (await session.execute(
             select(Poll).where(
-                ((Poll.target_role == user.role) | (Poll.target_role == "все"))
-                & (~Poll.id.in_(completed_poll_ids))
+                (Poll.target_role == user.role) | (Poll.target_role == "все"),
+                (Poll.group_id.is_(None)) | (Poll.group_id == user.group_id)
             )
-        )
-        polls = polls_result.scalars().all()
+        )).scalars().all()
 
-        if not polls:
-            return await message.answer("Нет доступных опросов.")
+    if not polls:
+        return await message.answer("❌ Нет доступных опросов.")
 
-        text = "Доступные опросы:\n"
-        for idx, poll in enumerate(polls, start=1):
-            text += f"{idx}. {poll.title}\n"
+    # 3) Строим клавиатуру с опросами
+    kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    for i, p in enumerate(polls, 1):
+        kb.add(KeyboardButton(f"{i}. {p.title}"))
 
-        user_poll_state[user_id] = {"polls": polls}  # Сохраняем доступные опросы в состояние
+    # 4) Сохраняем список опросов и переводим FSM в состояние выбора
+    await state.update_data(poll_ids=[p.id for p in polls])
+    await state.set_state(StudentPollStates.choosing_poll)  # <-- добавлено!
+    await message.answer("📋 Выберите опрос:", reply_markup=kb)
 
-        await state.set_state(PollTaking.choosing_poll.state)
-        await message.answer(text + "\nВведите номер опроса, который хотите пройти:")
 
 async def choose_poll(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
