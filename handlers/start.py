@@ -1,67 +1,85 @@
-from aiogram import types
-from aiogram.dispatcher.filters import CommandStart
-from aiogram.dispatcher import FSMContext
-from config import load_config
-from database import AsyncSessionLocal
-from models import User
-from sqlalchemy.future import select
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 import os
 from dotenv import load_dotenv
 
+from aiogram import types
+from aiogram.dispatcher import FSMContext
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from sqlalchemy.future import select
+
+from database import AsyncSessionLocal
+from models import User
+from config import ADMIN_IDS, TEACHER_IDS, STUDENT_IDS
+
 load_dotenv()
 
-# Получаем список админов, студентов и учителей из .env
-ADMIN_IDS = set(map(int, os.getenv("ADMIN_IDS", "").split(","))) if os.getenv("ADMIN_IDS") else set()
-STUDENT_IDS = set(map(int, os.getenv("STUDENT_IDS", "").split(","))) if os.getenv("STUDENT_IDS") else set()
-TEACHER_IDS = set(map(int, os.getenv("TEACHER_IDS", "").split(","))) if os.getenv("TEACHER_IDS") else set()
+async def add_users_to_db(dp):
+    """
+    Автоматически добавляет всех tg_id из ADMIN_IDS, TEACHER_IDS, STUDENT_IDS в таблицу users.
+    """
+    print("▶️ Запуск add_users_to_db()")
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User))
+        existing = {u.tg_id for u in result.scalars().all()}
 
+        all_users = {
+            (tg, 'admin') for tg in ADMIN_IDS
+        } | {
+            (tg, 'teacher') for tg in TEACHER_IDS
+        } | {
+            (tg, 'student') for tg in STUDENT_IDS
+        }
 
-def get_user_keyboard():
-    kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add(KeyboardButton("📋 Пройти опрос"))
-    return kb
+        for tg_id, role in all_users:
+            if tg_id not in existing:
+                user = User(tg_id=tg_id, role=role)
+                session.add(user)
+                print(f"✅ Добавлен пользователь {tg_id} → роль {role}")
+
+        await session.commit()
+        print("✅ Все пользователи из .env добавлены в БД")
 
 
 async def cmd_start(message: types.Message, state: FSMContext):
-    print(f"📥 /start от: {message.from_user.id}")
-    await message.answer(f"Ваш Telegram ID: {message.from_user.id}")
-    user_id = message.from_user.id
+    """
+    Обработчик команды /start — регистрирует пользователя в БД (если его ещё нет),
+    показывает роль и меню в зависимости от роли.
+    """
+    tg_id = message.from_user.id
+    print(f"📥 /start от: {tg_id}")
 
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(User).where(User.tg_id == user_id))
+        result = await session.execute(select(User).where(User.tg_id == tg_id))
         user = result.scalar()
 
-        if user:
-            await message.answer(f"Привет! Вы вошли как {user.role.capitalize()} ✅")
-        else:
-            # Присваиваем роль пользователю
-            if user_id in ADMIN_IDS:
+        # Если пользователя нет — создаём
+        if not user:
+            if tg_id in ADMIN_IDS:
                 role = "admin"
-            elif user_id in STUDENT_IDS:
-                role = "student"
-            elif user_id in TEACHER_IDS:
+            elif tg_id in TEACHER_IDS:
                 role = "teacher"
+            elif tg_id in STUDENT_IDS:
+                role = "student"
             else:
-                role = "unknown"  # если не в одном из списков, присваиваем роль unknown
+                role = "unknown"
 
-            user = User(tg_id=user_id, role=role)
+            user = User(tg_id=tg_id, role=role)
             session.add(user)
             await session.commit()
-            await message.answer(f"Добро пожаловать! Вы зарегистрированы как {role.capitalize()} ✅")
+            print(f"✅ Зарегистрирован новый пользователь {tg_id} → {role}")
 
-        # Важно: добавляем кнопки для пользователя
+        # Приветственное сообщение
+        await message.answer(f"Привет, вы вошли как {user.role.capitalize()} ✅")
+
+        # Формируем клавиатуру в зависимости от роли
+        kb = ReplyKeyboardMarkup(resize_keyboard=True)
         if user.role == "admin":
-            kb = ReplyKeyboardMarkup(resize_keyboard=True)
             kb.add(KeyboardButton("📊 Статистика"))
             kb.add(KeyboardButton("➕ Создать опрос"), KeyboardButton("🗑 Удалить опрос"))
             kb.add(KeyboardButton("👥 Управление пользователями"))
-            await message.answer("Выберите действие:", reply_markup=kb)
-        elif user.role == "student" or user.role == "teacher":
-            # Если пользователь обычный студент/учитель
-            kb = ReplyKeyboardMarkup(resize_keyboard=True)
+        elif user.role in ("teacher", "student"):
             kb.add(KeyboardButton("📋 Пройти опрос"))
-            print(f"User role: {user.role}, button added")
-            await message.answer("Выберите действие:", reply_markup=kb)
         else:
-            await message.answer("Ваш аккаунт не зарегистрирован для использования бота.")
+            await message.answer("⛔ У вас нет прав для работы с ботом.")
+            return
+
+        await message.answer("Выберите действие:", reply_markup=kb)

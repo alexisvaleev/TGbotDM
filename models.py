@@ -1,12 +1,8 @@
-from sqlalchemy import (
-    Column, Integer, String, ForeignKey, Boolean, DateTime, Text
-)
+from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, DateTime, Text, BigInteger
 from sqlalchemy.orm import relationship, declarative_base
 from datetime import datetime
 
 Base = declarative_base()
-
-from sqlalchemy import BigInteger
 
 class User(Base):
     __tablename__ = 'users'
@@ -15,7 +11,6 @@ class User(Base):
     tg_id = Column(BigInteger, unique=True, nullable=False)  # Изменено на BigInteger
     role = Column(String, nullable=False)  # 'admin', 'teacher', 'student'
     group_id = Column(Integer, ForeignKey('groups.id'), nullable=True)
-
 
 class Group(Base):
     __tablename__ = 'groups'
@@ -56,13 +51,10 @@ class UserPollProgress(Base):
     poll_id = Column(Integer, ForeignKey('polls.id'), nullable=False)
     is_completed = Column(Boolean, default=False)
 
-from sqlalchemy import BigInteger
-
 class UserAnswer(Base):
     __tablename__ = 'user_answers'
 
     id = Column(Integer, primary_key=True)
-    user_id = Column(BigInteger, ForeignKey('users.id'), nullable=False)  # Изменили на BigInteger
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)  # Теперь Integer, а не BigInteger
     question_id = Column(Integer, ForeignKey('questions.id'), nullable=False)
     answer_text = Column(Text, nullable=False)
-

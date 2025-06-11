@@ -133,58 +133,55 @@ async def process_answer(message: types.Message, state: FSMContext):
     user_data["current_q"] += 1
     await send_next_question(message, state)
 
-async def finish_poll(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-    user_data = user_poll_state.get(user_id)
+from aiogram import types
+from aiogram.dispatcher import FSMContext
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from sqlalchemy.future import select
 
-    if not user_data:  # Если данных нет, завершить
-        print(f"finish_poll: Нет данных для пользователя {user_id}")
+from database import AsyncSessionLocal
+from models import User, UserPollProgress, UserAnswer
+
+# предполагается, что user_poll_state — ваш глобальный dict
+# { tg_id: { "poll_id": ..., "answers": [(question_id, text), …] } }
+async def finish_poll(message: types.Message, state: FSMContext):
+    tg_id = message.from_user.id
+    user_data = user_poll_state.get(tg_id)
+
+    if not user_data:
+        print(f"finish_poll: нет данных для пользователя {tg_id}")
         return
 
-    print(f"finish_poll: Завершаем опрос для пользователя {user_id}, poll_id={user_data['poll_id']}")  # Отладка
-
     async with AsyncSessionLocal() as session:
-        # Сохраняем результаты опроса
-        progress = UserPollProgress(user_id=user_id, poll_id=user_data["poll_id"], is_completed=True)
+        result = await session.execute(select(User).where(User.tg_id == tg_id))
+        db_user = result.scalar()
+        if not db_user:
+            await message.answer("❌ Ошибка: пользователь не найден в базе.")
+            return
+        db_user_id = db_user.id
+
+        progress = UserPollProgress(user_id=db_user_id, poll_id=user_data["poll_id"], is_completed=True)
         session.add(progress)
 
-        # Сохраняем ответы пользователя
-        for q_id, ans_text in user_data["answers"]:
-            print(f"Сохраняем ответ: вопрос ID = {q_id}, ответ = {ans_text}")  # Отладка
-            session.add(UserAnswer(user_id=user_id, question_id=q_id, answer_text=ans_text))
+        for question_id, answer_text in user_data["answers"]:
+            ua = UserAnswer(user_id=db_user_id, question_id=question_id, answer_text=answer_text)
+            session.add(ua)
 
         try:
             await session.commit()
-            print(f"Ответы сохранены для пользователя {user_id}.")  # Отладка
+            print(f"✅ Данные опроса сохранены для пользователя {tg_id} (db_id={db_user_id})")
         except Exception as e:
-            print(f"Ошибка при сохранении в базе данных: {e}")  # Логируем ошибку, если она есть
+            await session.rollback()
+            print(f"❌ Ошибка при сохранении опроса: {e}")
+            await message.answer("⚠️ Ошибка при сохранении результатов.")
+            return
 
-    # Отправляем сообщение, что опрос завершен
-    try:
-        print(f"Опрос завершен для пользователя {user_id}, отправка сообщения.")
-        await message.answer("✅ Опрос завершён. Спасибо за участие!", reply_markup=ReplyKeyboardRemove())
-    except Exception as e:
-        print(f"Ошибка при отправке сообщения: {e}")  # Логируем ошибку, если не удалось отправить сообщение
+    await message.answer("✅ Опрос завершён. Спасибо за участие!", reply_markup=ReplyKeyboardRemove())
 
-    # Добавляем кнопки главного меню
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
     kb.add(KeyboardButton("📋 Пройти опрос"))
-    try:
-        await message.answer("Выберите действие:", reply_markup=kb)
-        print("Главное меню отправлено.")  # Отладка
-    except Exception as e:
-        print(f"Ошибка при отправке главного меню: {e}")
+    await message.answer("Выберите действие:", reply_markup=kb)
 
-    # Завершаем состояние FSM
-    try:
-        print(f"Завершаем FSM для пользователя {user_id}")
-        await state.finish()  # Убедитесь, что это вызывается
-
-        # Убедитесь, что данные удаляются из состояния
-        if user_id in user_poll_state:
-            user_poll_state.pop(user_id)
-            print(f"Состояние для пользователя {user_id} удалено.")
-        print(f"Состояние FSM для пользователя {user_id} завершено и очищено.")
-    except Exception as e:
-        print(f"Ошибка при завершении состояния FSM: {e}")
+    await state.finish()
+    user_poll_state.pop(tg_id, None)
+    print(f"FSM и временное состояние очищены для пользователя {tg_id}")
 

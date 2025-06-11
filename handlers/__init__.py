@@ -1,26 +1,23 @@
 from aiogram import Dispatcher
 
-from .start import cmd_start
-from .poll_creation import (
-    PollCreation,
-    start_poll_creation,
-    register_poll_creation,
-)
+from .start import cmd_start, add_users_to_db
+from .poll_creation import register_poll_creation
 from .poll_taking import (
-    PollTaking,
     start_poll_taking,
     choose_poll,
-    send_next_question,
     process_answer,
+    send_next_question,
 )
 
 def register_handlers(dp: Dispatcher):
+    # /start
     dp.register_message_handler(cmd_start, commands=["start"], state="*")
+    # автодобавление в БД не регистрируется как хендлер, а вызывается в on_startup
 
-    # Регистрация хендлеров создания опроса
+    # Создание опросов
     register_poll_creation(dp)
 
-    # Хендлеры прохождения опросов
+    # Прохождение опросов
     dp.register_message_handler(start_poll_taking, text="📋 Пройти опрос", state="*")
-    dp.register_message_handler(choose_poll, state=PollTaking.choosing_poll)
-    dp.register_message_handler(process_answer, state=PollTaking.answering_questions)
+    dp.register_message_handler(choose_poll, state="PollTaking:choosing_poll")
+    dp.register_message_handler(process_answer, state="PollTaking:answering_questions")

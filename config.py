@@ -3,8 +3,15 @@ from dataclasses import dataclass
 from typing import List
 from dotenv import load_dotenv
 import os
+from dotenv import load_dotenv
+import os
 
 load_dotenv()
+
+ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS").split(","))) if os.getenv("ADMIN_IDS") else []
+TEACHER_IDS = list(map(int, os.getenv("TEACHER_IDS").split(","))) if os.getenv("TEACHER_IDS") else []
+STUDENT_IDS = list(map(int, os.getenv("STUDENT_IDS").split(","))) if os.getenv("STUDENT_IDS") else []
+
 
 @dataclass
 class Config:
