@@ -2,7 +2,6 @@
 
 import io
 import csv
-
 from aiogram import types, Dispatcher
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
@@ -12,7 +11,7 @@ from aiogram.types import (
     KeyboardButton,
     InputFile
 )
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 
 from database import AsyncSessionLocal
 from models import (
@@ -92,43 +91,48 @@ async def confirm_delete_poll(message: types.Message, state: FSMContext):
 
     async with AsyncSessionLocal() as session:
         try:
-            # 1) Удаляем прогресс прохождения опроса
+            # 0) Сначала обнуляем last_question_id у всех прогрессов этого опроса
+            await session.execute(
+                update(UserPollProgress)
+                .where(UserPollProgress.poll_id == poll_id)
+                .values(last_question_id=None)
+            )
+
+            # 1) Удаляем прогресс прохождения
             await session.execute(
                 delete(UserPollProgress).where(UserPollProgress.poll_id == poll_id)
             )
-            # 2) Удаляем ответы пользователей на вопросы этого опроса
-            # Получаем все связанные question_id
+            # 2) Собираем question_ids
             q_res = await session.execute(
                 select(Question.id).where(Question.poll_id == poll_id)
             )
             question_ids = [q_id for (q_id,) in q_res.all()]
 
             if question_ids:
-                # Удаляем UserAnswer
+                # 3) Удаляем ответы пользователей на эти вопросы
                 await session.execute(
                     delete(UserAnswer).where(UserAnswer.question_id.in_(question_ids))
                 )
-                # Удаляем варианты Answer
+                # 4) Удаляем варианты Answer
                 await session.execute(
                     delete(Answer).where(Answer.question_id.in_(question_ids))
                 )
-                # Удаляем сами вопросы
+                # 5) Удаляем сами вопросы
                 await session.execute(
-                    delete(Question).where(Question.poll_id == poll_id)
+                    delete(Question).where(Question.id.in_(question_ids))
                 )
 
-            # 3) Удаляем сам Poll
+            # 6) Наконец удаляем сам Poll
             await session.execute(
                 delete(Poll).where(Poll.id == poll_id)
             )
 
             await session.commit()
-            await message.answer("✅ Опрос и все связанные данные удалены.", reply_markup=ReplyKeyboardRemove())
+            await message.answer("✅ Опрос и все связанные данные удалены.")
         except Exception as e:
             await session.rollback()
             print("Ошибка при каскадном удалении:", e)
-            await message.answer("⚠️ Ошибка при удалении опроса. Свяжитесь с разработчиком.")
-            return
+            await message.answer("⚠️ Ошибка при удалении опроса.")
 
     await _return_to_admin_menu(message)
     await state.finish()
