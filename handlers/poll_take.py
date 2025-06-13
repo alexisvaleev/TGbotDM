@@ -1,148 +1,152 @@
 # handlers/poll_take.py
-
+import logging
 from aiogram import types, Dispatcher
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from sqlalchemy import select, update
+
 from database import AsyncSessionLocal
 from models import User, Poll, Question, Answer, UserAnswer, UserPollProgress
 
+logging.basicConfig(level=logging.DEBUG)
 
-class StudentPollStates(StatesGroup):
-    choosing_poll = State()    # ждём, что студент выберет опрос
-    answering     = State()    # ждём, что студент нажмёт кнопку-ответ
+class PollTaking(StatesGroup):
+    choosing_poll       = State()
+    answering_questions = State()
 
 
 async def start_poll_taking(message: types.Message, state: FSMContext):
-    """Обработчик для кнопки '📋 Пройти опрос'. Показывает список доступных опросов."""
-    await state.finish()  # Сбрасываем старые состояния
+    await state.finish()
     await message.answer("Ищем доступные опросы…", reply_markup=ReplyKeyboardRemove())
+    tg = message.from_user.id
 
-    tg_id = message.from_user.id
-    async with AsyncSessionLocal() as session:
-        user = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar()
-        if not user:
-            return await message.answer("❌ Сначала зарегистрируйтесь через /start.")
+    async with AsyncSessionLocal() as s:
+        user = (await s.execute(select(User).where(User.tg_id == tg))).scalar()
+    if not user:
+        return await message.answer("❌ Сначала /start.")
 
-        polls = (await session.execute(
-            select(Poll).where(
+    async with AsyncSessionLocal() as s:
+        polls = (await s.execute(
+            select(Poll)
+            .where(
                 (Poll.target_role == user.role) | (Poll.target_role == "все"),
                 (Poll.group_id.is_(None)) | (Poll.group_id == user.group_id)
             )
         )).scalars().all()
-
     if not polls:
-        return await message.answer("❌ Нет доступных опросов.")
+        return await message.answer("❌ Нет опросов.")
 
     kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     for i, p in enumerate(polls, 1):
         kb.add(KeyboardButton(f"{i}. {p.title}"))
-
     await state.update_data(poll_ids=[p.id for p in polls])
-    await state.set_state(StudentPollStates.choosing_poll)
-    await message.answer("📋 Выберите опрос:", reply_markup=kb)
+    await PollTaking.choosing_poll.set()
+    await message.answer("Выберите опрос:", reply_markup=kb)
 
 
 async def choose_poll(message: types.Message, state: FSMContext):
-    """Студент выбрал опрос. Создаём запись прогресса и задаём первый вопрос."""
     data = await state.get_data()
-    poll_ids = data.get("poll_ids", [])
+    ids  = data.get("poll_ids", [])
+    part = (message.text or "").split(".")
+    if not part[0].isdigit():
+        return await message.answer("Нажмите кнопку с номером.")
+    idx = int(part[0]) - 1
+    if idx < 0 or idx >= len(ids):
+        return await message.answer("Неверный номер.")
+    poll_id = ids[idx]
+    tg = message.from_user.id
 
-    text = message.text.split(".")[0]
-    if not text.isdigit():
-        return await message.answer("Пожалуйста, нажмите кнопку с номером опроса.")
-    idx = int(text) - 1
-    if idx < 0 or idx >= len(poll_ids):
-        return await message.answer("Неверный выбор.")
+    async with AsyncSessionLocal() as s:
+        user = (await s.execute(select(User).where(User.tg_id == tg))).scalar()
+        prog = UserPollProgress(user_id=user.id, poll_id=poll_id)
+        s.add(prog)
+        await s.commit()
+        await s.refresh(prog)
 
-    poll_id = poll_ids[idx]
+        q_objs = (await s.execute(select(Question).where(Question.poll_id == poll_id))).scalars().all()
+    q_ids = [q.id for q in q_objs]
 
-    tg_id = message.from_user.id
-    async with AsyncSessionLocal() as session:
-        user = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar()
-        progress = UserPollProgress(
-            user_id=user.id, poll_id=poll_id,
-            last_question_id=None, is_completed=False
-        )
-        session.add(progress)
-        await session.commit()
-
-    await state.update_data(poll_id=poll_id, progress_id=progress.id, q_index=0)
+    logging.debug(f"User {tg} started poll {poll_id}, questions: {len(q_ids)}")
+    await state.update_data(progress_id=prog.id, question_ids=q_ids, q_index=0)
+    await PollTaking.answering_questions.set()
     await _ask_question(message, state)
 
 
 async def _ask_question(message: types.Message, state: FSMContext):
-    """Выдаёт следующий вопрос и варианты ответа."""
     data = await state.get_data()
-    poll_id = data["poll_id"]
-    q_index = data["q_index"]
-
-    async with AsyncSessionLocal() as session:
-        questions = (await session.execute(select(Question).where(Question.poll_id == poll_id))).scalars().all()
-
-    if q_index >= len(questions):
+    q_ids = data["question_ids"]
+    idx   = data["q_index"]
+    if idx >= len(q_ids):
         return await _finish_poll(message, state)
 
-    question = questions[q_index]
+    q_id = q_ids[idx]
+    async with AsyncSessionLocal() as s:
+        q_obj   = (await s.execute(select(Question).where(Question.id == q_id))).scalar()
+        answers = (await s.execute(select(Answer).where(Answer.question_id == q_id))).scalars().all()
 
-    async with AsyncSessionLocal() as session:
-        options = (await session.execute(select(Answer).where(Answer.question_id == question.id))).scalars().all()
+    logging.debug(f"Asking Q#{idx+1}/{len(q_ids)} id={q_id}: '{q_obj.question_text}'")
+    logging.debug("Loaded answers: %r", [a.answer_text for a in answers])
 
-    kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    for opt in options:
-        kb.add(KeyboardButton(opt.answer_text))
-
-    await state.set_state(StudentPollStates.answering)
-    await message.answer(question.question_text, reply_markup=kb)
+    if answers:
+        kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+        for a in answers:
+            kb.add(KeyboardButton(a.answer_text))
+        await message.answer(f"❓ {q_obj.question_text}", reply_markup=kb)
+    else:
+        await message.answer(f"❓ {q_obj.question_text}", reply_markup=ReplyKeyboardRemove())
 
 
 async def process_answer(message: types.Message, state: FSMContext):
-    """Сохраняем ответ студента и переходим к следующему вопросу."""
-    data = await state.get_data()
-    poll_id     = data["poll_id"]
-    progress_id = data["progress_id"]
-    q_index     = data["q_index"]
+    data    = await state.get_data()
+    q_ids   = data["question_ids"]
+    idx     = data["q_index"]
+    prog_id = data["progress_id"]
+    text    = message.text.strip()
 
-    async with AsyncSessionLocal() as session:
-        questions = (await session.execute(select(Question).where(Question.poll_id == poll_id))).scalars().all()
-    question = questions[q_index]
-
-    text = message.text.strip()
-    async with AsyncSessionLocal() as session:
-        valid = (await session.execute(select(Answer).where(
-            Answer.question_id == question.id,
-            Answer.answer_text == text
-        ))).scalar()
+    # Валидация
+    async with AsyncSessionLocal() as s:
+        valid = (await s.execute(
+            select(Answer).where(
+                Answer.question_id == q_ids[idx],
+                Answer.answer_text == text
+            )
+        )).scalar()
     if not valid:
-        return await message.answer("Выберите вариант кнопкой, пожалуйста.")
+        return await message.answer("Выберите ответ кнопкой.")
 
-    tg_id = message.from_user.id
-    async with AsyncSessionLocal() as session:
-        user = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar()
-        ua = UserAnswer(user_id=user.id, question_id=question.id, answer_text=text)
-        session.add(ua)
-        await session.execute(update(UserPollProgress).where(UserPollProgress.id == progress_id).values(last_question_id=question.id))
-        await session.commit()
+    tg = message.from_user.id
+    async with AsyncSessionLocal() as s:
+        user = (await s.execute(select(User).where(User.tg_id == tg))).scalar()
+        s.add(UserAnswer(user_id=user.id,
+                         question_id=q_ids[idx],
+                         answer_text=text))
+        await s.execute(
+            update(UserPollProgress)
+            .where(UserPollProgress.id == prog_id)
+            .values(last_question_id=q_ids[idx])
+        )
+        await s.commit()
 
-    await state.update_data(q_index=q_index + 1)
+    await state.update_data(q_index=idx+1)
     await _ask_question(message, state)
 
 
 async def _finish_poll(message: types.Message, state: FSMContext):
-    """Завершаем опрос, убираем клавиатуру и благодарим студента."""
-    data = await state.get_data()
-    progress_id = data["progress_id"]
-
-    async with AsyncSessionLocal() as session:
-        await session.execute(update(UserPollProgress).where(UserPollProgress.id == progress_id).values(is_completed=True))
-        await session.commit()
-
-    await message.answer("🎉 Опрос завершён. Спасибо за участие!", reply_markup=ReplyKeyboardRemove())
+    data    = await state.get_data()
+    prog_id = data["progress_id"]
+    async with AsyncSessionLocal() as s:
+        await s.execute(
+            update(UserPollProgress)
+            .where(UserPollProgress.id == prog_id)
+            .values(is_completed=True)
+        )
+        await s.commit()
+    await message.answer("🎉 Готово!", reply_markup=ReplyKeyboardRemove())
     await state.finish()
 
 
 def register_poll_take(dp: Dispatcher):
     dp.register_message_handler(start_poll_taking, text="📋 Пройти опрос", state="*")
-    dp.register_message_handler(choose_poll, state=StudentPollStates.choosing_poll)
-    dp.register_message_handler(process_answer, state=StudentPollStates.answering)
+    dp.register_message_handler(choose_poll, state=PollTaking.choosing_poll)
+    dp.register_message_handler(process_answer, state=PollTaking.answering_questions)

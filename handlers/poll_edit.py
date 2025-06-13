@@ -1,12 +1,9 @@
 # handlers/poll_edit.py
-
-import io
 from aiogram import types, Dispatcher
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import StatesGroup, State
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from sqlalchemy.future import select
-
 from database import AsyncSessionLocal
 from models import Poll, Group, User
 
@@ -28,14 +25,11 @@ async def start_edit_poll(message: types.Message, state: FSMContext):
         )).scalar()
     if not user or user.role != "admin":
         return await message.answer("⛔ Только админы могут редактировать опросы.")
-
     # Берём все опросы
     async with AsyncSessionLocal() as session:
         polls = (await session.execute(select(Poll))).scalars().all()
-
     if not polls:
         return await message.answer("Нет опросов для редактирования.")
-
     # Сохраняем список ID и показываем меню
     await state.update_data(poll_ids=[p.id for p in polls])
     text = "✏️ Выберите опрос для редактирования:\n" + "\n".join(
@@ -44,22 +38,17 @@ async def start_edit_poll(message: types.Message, state: FSMContext):
     await state.set_state(EditPollStates.choosing_poll)
     await message.answer(text, reply_markup=ReplyKeyboardRemove())
 
-
 async def choose_edit_poll(message: types.Message, state: FSMContext):
     """Шаг 2. Админ вводит номер опроса из списка."""
     data = await state.get_data()
     poll_ids = data.get("poll_ids", [])
-
     if not message.text.isdigit():
         return await message.answer("Введите номер опроса цифрой.")
-
     idx = int(message.text) - 1
     if idx < 0 or idx >= len(poll_ids):
         return await message.answer("Неверный номер.")
-
     poll_id = poll_ids[idx]
     await state.update_data(edit_poll_id=poll_id)
-
     # Предлагаем, что будем править
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
     kb.add(KeyboardButton("🔤 Название"))
@@ -69,20 +58,17 @@ async def choose_edit_poll(message: types.Message, state: FSMContext):
     await state.set_state(EditPollStates.choosing_field)
     await message.answer("Что хотите изменить?", reply_markup=kb)
 
-
 async def choose_edit_field(message: types.Message, state: FSMContext):
     """Шаг 3. Админ выбирает поле."""
     text = message.text.strip()
     if text == "🔤 Название":
         await state.set_state(EditPollStates.editing_title)
         return await message.answer("Введите новый заголовок опроса:", reply_markup=ReplyKeyboardRemove())
-
     if text == "👥 Целевая аудитория":
         kb = ReplyKeyboardMarkup(resize_keyboard=True)
         kb.add(KeyboardButton("teacher"), KeyboardButton("student"), KeyboardButton("все"))
         await state.set_state(EditPollStates.editing_target)
         return await message.answer("Выберите новую аудиторию:", reply_markup=kb)
-
     if text == "🏷 Группа":
         # Список групп
         async with AsyncSessionLocal() as session:
@@ -95,19 +81,16 @@ async def choose_edit_field(message: types.Message, state: FSMContext):
         kb.add(KeyboardButton("❌ Без группы"))
         await state.set_state(EditPollStates.editing_group)
         return await message.answer("Выберите группу для опроса:", reply_markup=kb)
-
     # Отмена
     await state.finish()
     await return_to_admin_menu(message)
     await message.answer("❌ Редактирование отменено.", reply_markup=ReplyKeyboardRemove())
-
 
 async def process_edit_title(message: types.Message, state: FSMContext):
     """Шаг 4а. Обновляем название."""
     new_title = message.text.strip()
     data = await state.get_data()
     poll_id = data["edit_poll_id"]
-
     async with AsyncSessionLocal() as session:
         await session.execute(
             Poll.__table__
@@ -115,7 +98,6 @@ async def process_edit_title(message: types.Message, state: FSMContext):
             .values(title=new_title)
         )
         await session.commit()
-
     await message.answer("✅ Название опроса обновлено.", reply_markup=ReplyKeyboardRemove())
     await state.finish()
     await return_to_admin_menu(message)
@@ -126,10 +108,8 @@ async def process_edit_target(message: types.Message, state: FSMContext):
     new_target = message.text.strip()
     if new_target not in ("teacher", "student", "все"):
         return await message.answer("Выберите один из предложенных вариантов.")
-
     data = await state.get_data()
     poll_id = data["edit_poll_id"]
-
     async with AsyncSessionLocal() as session:
         await session.execute(
             Poll.__table__
@@ -137,7 +117,6 @@ async def process_edit_target(message: types.Message, state: FSMContext):
             .values(target_role=new_target)
         )
         await session.commit()
-
     await message.answer("✅ Целевая аудитория обновлена.", reply_markup=ReplyKeyboardRemove())
     await state.finish()
     await return_to_admin_menu(message)
@@ -146,7 +125,6 @@ async def process_edit_target(message: types.Message, state: FSMContext):
 async def process_edit_group(message: types.Message, state: FSMContext):
     """Шаг 4в. Обновляем группу."""
     choice = message.text.strip()
-
     async with AsyncSessionLocal() as session:
         if choice == "❌ Без группы":
             new_group = None
@@ -157,10 +135,8 @@ async def process_edit_group(message: types.Message, state: FSMContext):
             if not grp:
                 return await message.answer("Нажмите кнопку с названием группы.")
             new_group = grp.id
-
         data = await state.get_data()
         poll_id = data["edit_poll_id"]
-
         await session.execute(
             Poll.__table__
             .update().where(Poll.id == poll_id)
@@ -172,7 +148,6 @@ async def process_edit_group(message: types.Message, state: FSMContext):
     await state.finish()
     await return_to_admin_menu(message)
 
-
 async def return_to_admin_menu(message: types.Message):
     """Отправляем кнопки админа."""
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
@@ -181,7 +156,6 @@ async def return_to_admin_menu(message: types.Message):
     kb.add(KeyboardButton("✏️ Редактировать опрос"), KeyboardButton("📥 Экспорт результатов"))
     kb.add(KeyboardButton("👥 Управление пользователями"))
     await message.answer("Выберите действие:", reply_markup=kb)
-
 
 def register_poll_edit(dp: Dispatcher):
     dp.register_message_handler(start_edit_poll, text="✏️ Редактировать опрос", state="*")
