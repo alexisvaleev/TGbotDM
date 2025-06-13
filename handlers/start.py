@@ -5,7 +5,7 @@ from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import StatesGroup, State
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from sqlalchemy.future import select
-
+from handlers.common import BACK_BTN
 from database import AsyncSessionLocal
 from models import User, Group
 from config import ADMIN_IDS, TEACHER_IDS, STUDENT_IDS
@@ -107,24 +107,22 @@ async def process_group_choice(message: types.Message, state: FSMContext):
     return await _send_main_menu(message, user.role)
 
 
+# handlers/start.py  — обновляем только _send_main_menu
+
+
 async def _send_main_menu(message: types.Message, role: str):
-    """
-    Рисует главное меню в зависимости от роли:
-      - admin   → кнопки создания/удаления/редактирования/экспорта
-      - teacher → кнопки создания и прохождения опроса
-      - student → кнопка прохождения опроса
-    """
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
     if role == "admin":
         kb.add(KeyboardButton("➕ Создать опрос"), KeyboardButton("🗑 Удалить опрос"))
         kb.add(KeyboardButton("✏️ Редактировать опрос"), KeyboardButton("📥 Экспорт результатов"))
+        kb.add(KeyboardButton("👥 Управление пользователями"), KeyboardButton("➕ Создать группу"))
     elif role == "teacher":
         kb.add(KeyboardButton("➕ Создать опрос"), KeyboardButton("📋 Пройти опрос"))
+        kb.add(KeyboardButton("✏️ Редактировать опрос"), KeyboardButton("📥 Экспорт результатов"))
+        kb.add(KeyboardButton("👥 Управление пользователями"), KeyboardButton("➕ Создать группу"))
     elif role == "student":
         kb.add(KeyboardButton("📋 Пройти опрос"))
-    else:
-        return await message.answer("⛔ У вас нет прав для использования бота.")
-
+    kb.add(BACK_BTN)  # Добавляем кнопку «Назад»
     return await message.answer("Выберите действие:", reply_markup=kb)
 
 

@@ -22,7 +22,7 @@ from models import (
     UserPollProgress,
     UserAnswer
 )
-
+from handlers.common import BACK_BTN
 
 class DeletePollStates(StatesGroup):
     choosing = State()
@@ -41,7 +41,7 @@ async def start_delete_poll(message: types.Message, state: FSMContext):
         user = (await session.execute(
             select(User).where(User.tg_id == tg_id)
         )).scalar()
-    if not user or user.role != "admin":
+    if not user or user.role not in ("admin", "teacher"):
         return await message.answer("⛔ Только админы могут удалять опросы.")
 
     # Получаем все опросы

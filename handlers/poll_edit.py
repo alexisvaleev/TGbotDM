@@ -6,6 +6,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemo
 from sqlalchemy.future import select
 from database import AsyncSessionLocal
 from models import Poll, Group, User
+from handlers.common import BACK_BTN
 
 class EditPollStates(StatesGroup):
     choosing_poll   = State()  # выбираем опрос
@@ -23,7 +24,7 @@ async def start_edit_poll(message: types.Message, state: FSMContext):
         user = (await session.execute(
             select(User).where(User.tg_id == tg_id)
         )).scalar()
-    if not user or user.role != "admin":
+    if not user or user.role not in ("admin", "teacher"):
         return await message.answer("⛔ Только админы могут редактировать опросы.")
     # Берём все опросы
     async with AsyncSessionLocal() as session:

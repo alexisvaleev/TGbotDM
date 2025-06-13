@@ -5,7 +5,7 @@ from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from sqlalchemy import select, update
-
+from handlers.common import BACK_BTN
 from database import AsyncSessionLocal
 from models import User, Poll, Question, Answer, UserAnswer, UserPollProgress
 
@@ -43,6 +43,7 @@ async def start_poll_taking(message: types.Message, state: FSMContext):
     await state.update_data(poll_ids=[p.id for p in polls])
     await PollTaking.choosing_poll.set()
     await message.answer("Выберите опрос:", reply_markup=kb)
+    kb.add(BACK_BTN)
 
 
 async def choose_poll(message: types.Message, state: FSMContext):
@@ -93,6 +94,7 @@ async def _ask_question(message: types.Message, state: FSMContext):
         for a in answers:
             kb.add(KeyboardButton(a.answer_text))
         await message.answer(f"❓ {q_obj.question_text}", reply_markup=kb)
+        kb.add(BACK_BTN)
     else:
         await message.answer(f"❓ {q_obj.question_text}", reply_markup=ReplyKeyboardRemove())
 

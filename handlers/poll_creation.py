@@ -1,11 +1,10 @@
 # handlers/poll_creation.py
-
 from aiogram import types, Dispatcher
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.dispatcher import FSMContext
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from sqlalchemy.future import select
-
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from handlers.common import BACK_BTN
 from database import AsyncSessionLocal
 from models import User, Poll, Question, Answer
 from handlers.start import _send_main_menu  # для отображения админ-меню после создания
@@ -32,13 +31,13 @@ async def start_poll_creation(message: types.Message, state: FSMContext):
     await state.set_state(PollCreation.waiting_for_title)
     await message.answer("Введите заголовок опроса:", reply_markup=ReplyKeyboardRemove())
 
-
 async def process_poll_title(message: types.Message, state: FSMContext):
-    await state.update_data(title=message.text.strip())
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
     kb.add(KeyboardButton("студенты"), KeyboardButton("учителя"), KeyboardButton("все"))
+    kb.add(BACK_BTN)  # Добавляем кнопку «Назад»
     await state.set_state(PollCreation.waiting_for_target)
     await message.answer("Для кого предназначен опрос?", reply_markup=kb)
+
 
 
 async def process_poll_target(message: types.Message, state: FSMContext):
@@ -77,6 +76,7 @@ async def process_answer_options(message: types.Message, state: FSMContext):
     if text == "✅ Готово" or text == "❌ Нет вариантов":
         kb = ReplyKeyboardMarkup(resize_keyboard=True)
         kb.add(KeyboardButton("➕ Добавить вопрос"), KeyboardButton("✅ Завершить опрос"))
+        kb.add(BACK_BTN)
         await state.set_state(PollCreation.waiting_for_more_questions)
         return await message.answer(
             "Варианты сохранены." if text == "✅ Готово" else "Вопрос сохранён без вариантов.",

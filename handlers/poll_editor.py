@@ -2,7 +2,7 @@
 
 import io
 import csv
-
+from handlers.common import BACK_BTN
 from aiogram import types, Dispatcher
 from aiogram.types import (
     ReplyKeyboardRemove,
@@ -42,7 +42,7 @@ async def start_poll_editor(message: types.Message, state: FSMContext):
         user = (await s.execute(
             select(User).where(User.tg_id == tg_id)
         )).scalar()
-    if not user or user.role != "admin":
+    if not user or user.role not in ("admin", "teacher"):
         return await message.answer("⛔ Только админы могут редактировать опросы.")
 
     # Получаем список опросов
@@ -77,6 +77,7 @@ async def choose_poll(message: types.Message, state: FSMContext):
     kb.add(KeyboardButton("🔤 Параметры опроса"))
     kb.add(KeyboardButton("📝 Вопросы"))
     kb.add(KeyboardButton("❌ Готово"))
+    kb.add(BACK_BTN)
     await state.set_state(PollEditorStates.choosing_mode)
     await message.answer("Что будем править?", reply_markup=kb)
 
