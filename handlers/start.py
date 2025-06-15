@@ -117,14 +117,16 @@ async def _send_main_menu(message: types.Message, role: str):
         kb.add(KeyboardButton("✏️ Редактировать опрос"), KeyboardButton("📥 Экспорт результатов"))
         kb.add(KeyboardButton("👥 Управление пользователями"), KeyboardButton("➕ Создать группу"))
     elif role == "teacher":
-        kb.add(KeyboardButton("➕ Создать опрос"), KeyboardButton("📋 Пройти опрос"))
+        # почти то же, что у admin, плюс группа и прохождение опроса
+        kb.add(KeyboardButton("➕ Создать опрос"), KeyboardButton("🗑 Удалить опрос"))
         kb.add(KeyboardButton("✏️ Редактировать опрос"), KeyboardButton("📥 Экспорт результатов"))
         kb.add(KeyboardButton("👥 Управление пользователями"), KeyboardButton("➕ Создать группу"))
-    elif role == "student":
         kb.add(KeyboardButton("📋 Пройти опрос"))
-    kb.add(BACK_BTN)  # Добавляем кнопку «Назад»
-    return await message.answer("Выберите действие:", reply_markup=kb)
+    else:  # student
+        kb.add(KeyboardButton("📋 Пройти опрос"))
 
+    kb.add(BACK_BTN)
+    return await message.answer("Выберите действие:", reply_markup=kb)
 
 def register_start_handlers(dp: Dispatcher):
     dp.register_message_handler(cmd_start, commands=["start"], state="*")
