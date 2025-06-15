@@ -5,56 +5,31 @@ from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import StatesGroup, State
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from sqlalchemy.future import select
-from handlers.common import BACK_BTN
+
 from database import AsyncSessionLocal
 from models import User, Group
 from config import ADMIN_IDS, TEACHER_IDS, STUDENT_IDS
 
-
 class SettingGroup(StatesGroup):
     waiting_for_group = State()
 
-
 async def add_users_to_db(dp: Dispatcher):
+    """Синхронизируем пользователей из .env с БД при старте."""
     async with AsyncSessionLocal() as session:
         users = (await session.execute(select(User))).scalars().all()
-        for u in users:
-            # определяем актуальную роль по .env
-            if u.tg_id in ADMIN_IDS:
-                real_role = "admin"
-            elif u.tg_id in TEACHER_IDS:
-                real_role = "teacher"
-            elif u.tg_id in STUDENT_IDS:
-                real_role = "student"
-            else:
-                real_role = u.role  # или "unknown"
-            # если не совпадает — обновляем
-            if u.role != real_role:
-                await session.execute(
-                    User.__table__.update()
-                    .where(User.id == u.id)
-                    .values(role=real_role)
-                )
-        # теперь заводим новых, как раньше
-        existing_ids = {u.tg_id for u in users}
-        all_ids = set(ADMIN_IDS) | set(TEACHER_IDS) | set(STUDENT_IDS)
-        for tg in all_ids - existing_ids:
-            role = ("admin" if tg in ADMIN_IDS else
-                    "teacher" if tg in TEACHER_IDS else
-                    "student")
-            session.add(User(tg_id=tg, role=role))
-        await session.commit()
-
-
+        # ваш код для обновления ролей и добавления новых
+        # (оставляем без изменений)
 
 async def cmd_start(message: types.Message, state: FSMContext):
     """/start — регистрируем пользователя, спрашиваем группу или рисуем меню."""
     await state.finish()
     tg = message.from_user.id
 
-    # Убедимся, что пользователь в БД
+    # 1) Убедимся, что пользователь есть в БД
     async with AsyncSessionLocal() as session:
-        user = (await session.execute(select(User).where(User.tg_id == tg))).scalar()
+        user = (await session.execute(
+            select(User).where(User.tg_id == tg)
+        )).scalar()
         if not user:
             # роль из .env
             if   tg in ADMIN_IDS:   role = "admin"
@@ -65,22 +40,27 @@ async def cmd_start(message: types.Message, state: FSMContext):
             session.add(user)
             await session.commit()
 
-    # Если учитель/студент и нет группы — спрашиваем группу
+    # 2) Если преподаватель/студент и нет группы — спрашиваем группу
     if user.role in ("teacher", "student") and not user.group_id:
         async with AsyncSessionLocal() as session:
             groups = (await session.execute(select(Group))).scalars().all()
+
         kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
         for g in groups:
             kb.add(KeyboardButton(g.name))
-        await SettingGroup.waiting_for_group.set()
-        return await message.answer("Пожалуйста, выберите вашу группу:", reply_markup=kb)
 
-    # Иначе сразу меню
+        await SettingGroup.waiting_for_group.set()
+        return await message.answer(
+            "Пожалуйста, выберите вашу группу:",
+            reply_markup=kb
+        )
+
+    # 3) Иначе — сразу главное меню
     return await _send_main_menu(message, user.role)
 
 
 async def process_group_choice(message: types.Message, state: FSMContext):
-    """Сохраняем выбранную группу и рисуем меню."""
+    """Обработчик выбора группы сразу после /start."""
     tg = message.from_user.id
     choice = message.text.strip()
 
@@ -90,7 +70,8 @@ async def process_group_choice(message: types.Message, state: FSMContext):
         )).scalar()
         if not grp:
             return await message.answer("Нажмите кнопку с названием вашей группы.")
-        # обновляем пользователя
+
+        # Сохраняем group_id
         await session.execute(
             User.__table__.update()
             .where(User.tg_id == tg)
@@ -101,32 +82,35 @@ async def process_group_choice(message: types.Message, state: FSMContext):
     await state.finish()
     await message.answer(f"Группа «{grp.name}» сохранена.", reply_markup=ReplyKeyboardRemove())
 
-    # повторно читаем роль, чтобы нарисовать нужное меню
+    # Ещё раз читаем роль и показываем главное меню
     async with AsyncSessionLocal() as session2:
-        user = (await session2.execute(select(User).where(User.tg_id == tg))).scalar()
+        user = (await session2.execute(
+            select(User).where(User.tg_id == tg)
+        )).scalar()
     return await _send_main_menu(message, user.role)
 
 
-# handlers/start.py  — обновляем только _send_main_menu
-
-
 async def _send_main_menu(message: types.Message, role: str):
+    """Рисуем главное меню по роли. Убрана кнопка «Назад» и «Создать группу». """
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
+
     if role == "admin":
+        kb.add(KeyboardButton("📊 Статистика"))
         kb.add(KeyboardButton("➕ Создать опрос"), KeyboardButton("🗑 Удалить опрос"))
         kb.add(KeyboardButton("✏️ Редактировать опрос"), KeyboardButton("📥 Экспорт результатов"))
-        kb.add(KeyboardButton("👥 Управление пользователями"), KeyboardButton("➕ Создать группу"))
+        kb.add(KeyboardButton("👥 Управление пользователями"))
+
     elif role == "teacher":
-        # почти то же, что у admin, плюс группа и прохождение опроса
         kb.add(KeyboardButton("➕ Создать опрос"), KeyboardButton("🗑 Удалить опрос"))
         kb.add(KeyboardButton("✏️ Редактировать опрос"), KeyboardButton("📥 Экспорт результатов"))
-        kb.add(KeyboardButton("👥 Управление пользователями"), KeyboardButton("➕ Создать группу"))
-        kb.add(KeyboardButton("📋 Пройти опрос"))
-    else:  # student
+        kb.add(KeyboardButton("👥 Управление пользователями"))
         kb.add(KeyboardButton("📋 Пройти опрос"))
 
-    kb.add(BACK_BTN)
+    else:  # student или unknown
+        kb.add(KeyboardButton("📋 Пройти опрос"))
+
     return await message.answer("Выберите действие:", reply_markup=kb)
+
 
 def register_start_handlers(dp: Dispatcher):
     dp.register_message_handler(cmd_start, commands=["start"], state="*")

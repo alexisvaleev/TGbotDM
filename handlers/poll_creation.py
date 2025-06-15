@@ -1,13 +1,15 @@
 # handlers/poll_creation.py
+
 from aiogram import types, Dispatcher
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.dispatcher import FSMContext
 from sqlalchemy.future import select
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
-from handlers.common import BACK_BTN
+
+from handlers.common import BACK, BACK_BTN
+from handlers.back import return_to_main_menu
 from database import AsyncSessionLocal
 from models import User, Poll, Question, Answer
-from handlers.back import return_to_main_menu
 
 class PollCreation(StatesGroup):
     waiting_for_title            = State()
@@ -16,43 +18,66 @@ class PollCreation(StatesGroup):
     waiting_for_answer_options   = State()
     waiting_for_more_questions   = State()
 
-# Временное хранилище вопросов и их вариантов (по user_id)
+# временный буфер для хранения вопросов и их вариантов по user_id
 poll_creation_buffer: dict[int, list[dict]] = {}
 
+
 async def start_poll_creation(message: types.Message, state: FSMContext):
+    """Шаг 1. Админ/преподаватель запускает создание нового опроса."""
     tg = message.from_user.id
     async with AsyncSessionLocal() as s:
         user = (await s.execute(select(User).where(User.tg_id == tg))).scalar()
     if not user or user.role not in ("admin", "teacher"):
         return await message.answer("⛔ У вас нет прав для создания опросов.")
 
+    # начинаем FSM
+    await state.finish()
     await state.set_state(PollCreation.waiting_for_title)
-    await message.answer("Введите заголовок опроса:", reply_markup=ReplyKeyboardRemove())
+    await message.answer(
+        "Введите заголовок опроса:",
+        reply_markup=ReplyKeyboardRemove()
+    )
+
 
 async def process_poll_title(message: types.Message, state: FSMContext):
-    kb = ReplyKeyboardMarkup(resize_keyboard=True)
+    """Шаг 2. Сохраняем заголовок и спрашиваем целевую аудиторию."""
+    title = message.text.strip()
+    # сохраняем заголовок, чтобы не потерять при завершении
+    await state.update_data(title=title)
+
+    # клавиатура для выбора аудитории
+    kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     kb.add(KeyboardButton("студенты"), KeyboardButton("учителя"), KeyboardButton("все"))
-    kb.add(BACK_BTN)  # Добавляем кнопку «Назад»
+    kb.add(BACK_BTN)
+
     await state.set_state(PollCreation.waiting_for_target)
     await message.answer("Для кого предназначен опрос?", reply_markup=kb)
 
+
 async def process_poll_target(message: types.Message, state: FSMContext):
-    target = message.text.lower().strip()
+    """Шаг 3. Сохраняем целевую аудиторию и спрашиваем первый вопрос."""
+    target = message.text.strip().lower()
     if target not in ("студенты", "учителя", "все"):
-        return await message.answer("⛔ Пожалуйста, выберите один из вариантов кнопками.")
+        return await message.answer("⛔ Пожалуйста, выберите вариант кнопками.")
+
+    # сохраняем в буфер и FSM
     await state.update_data(target=target)
     poll_creation_buffer[message.from_user.id] = []
+
     await state.set_state(PollCreation.waiting_for_question_text)
     await message.answer("Введите текст первого вопроса:", reply_markup=ReplyKeyboardRemove())
 
+
 async def process_question_text(message: types.Message, state: FSMContext):
+    """Шаг 4. Сохраняем текст вопроса и просим добавить ответы."""
     uid = message.from_user.id
-    poll_creation_buffer.setdefault(uid, []).append({
-        "text": message.text.strip(),
-        "answers": []
-    })
-    kb = ReplyKeyboardMarkup(resize_keyboard=True)
+    buf = poll_creation_buffer.setdefault(uid, [])
+    buf.append({"text": message.text.strip(), "answers": []})
+
+    kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     kb.add(KeyboardButton("✅ Готово"), KeyboardButton("❌ Нет вариантов"))
+    kb.add(BACK_BTN)
+
     await state.set_state(PollCreation.waiting_for_answer_options)
     await message.answer(
         "Добавьте варианты ответа по одному сообщению.\n"
@@ -61,29 +86,39 @@ async def process_question_text(message: types.Message, state: FSMContext):
         reply_markup=kb
     )
 
+
 async def process_answer_options(message: types.Message, state: FSMContext):
+    """Шаг 5. Сохраняем каждый вариант ответа или переходим к следующему шагу."""
     uid = message.from_user.id
-    buf = poll_creation_buffer[uid]
+    buf = poll_creation_buffer.get(uid, [])
     last_q = buf[-1]
     text = message.text.strip()
 
-    if text == "✅ Готово" or text == "❌ Нет вариантов":
-        kb = ReplyKeyboardMarkup(resize_keyboard=True)
+    if text in ("✅ Готово", "❌ Нет вариантов"):
+        # клавиатура для выбора следующего действия
+        kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
         kb.add(KeyboardButton("➕ Добавить вопрос"), KeyboardButton("✅ Завершить опрос"))
         kb.add(BACK_BTN)
-        await state.set_state(PollCreation.waiting_for_more_questions)
-        return await message.answer(
-            "Варианты сохранены." if text == "✅ Готово" else "Вопрос сохранён без вариантов.",
-            reply_markup=kb
-        )
 
-    # добавляем новый вариант
+        await state.set_state(PollCreation.waiting_for_more_questions)
+        msg = "Варианты сохранены." if text == "✅ Готово" else "Вопрос сохранён без вариантов."
+        return await message.answer(msg, reply_markup=kb)
+
+    # иначе — обычный вариант ответа
     last_q["answers"].append(text)
     return await message.answer(f"Вариант добавлен: {text}")
 
+
 async def process_more_questions(message: types.Message, state: FSMContext):
+    """Шаг 6. Добавить ещё вопрос или завершить опрос."""
     uid = message.from_user.id
     cmd = message.text.strip()
+
+    # Обработка кнопки «Назад»
+    if cmd == BACK:
+        poll_creation_buffer.pop(uid, None)
+        await state.finish()
+        return await return_to_main_menu(message)
 
     if cmd == "➕ Добавить вопрос":
         await state.set_state(PollCreation.waiting_for_question_text)
@@ -95,7 +130,7 @@ async def process_more_questions(message: types.Message, state: FSMContext):
         if not questions:
             return await message.answer("⛔ Вы не добавили ни одного вопроса.")
 
-        # Сохраняем опрос, вопросы и варианты в БД
+        # сохраняем опрос и связанные сущности в БД
         async with AsyncSessionLocal() as session:
             poll = Poll(
                 title=data["title"],
@@ -108,40 +143,51 @@ async def process_more_questions(message: types.Message, state: FSMContext):
             await session.refresh(poll)
 
             for q in questions:
-                has_opts = bool(q["answers"])
-                q_type = "single_choice" if has_opts else "text"
+                q_type = "single_choice" if q["answers"] else "text"
                 question = Question(
                     poll_id=poll.id,
                     question_text=q["text"],
                     question_type=q_type
                 )
                 session.add(question)
-                await session.flush()  # получить question.id
-
+                await session.flush()
                 for ans_text in q["answers"]:
-                    answer = Answer(
-                        question_id=question.id,
-                        answer_text=ans_text
-                    )
-                    session.add(answer)
+                    session.add(Answer(question_id=question.id, answer_text=ans_text))
 
             await session.commit()
 
-        # Очистка буфера и завершение FSM
         poll_creation_buffer.pop(uid, None)
         await state.finish()
-
-        # Убираем клавиатуру и показываем админ-меню
         await message.answer("✅ Опрос сохранён!", reply_markup=ReplyKeyboardRemove())
         return await return_to_main_menu(message)
 
-    # Прочие сообщения не обрабатываем
+    # любая другая текстовая команда
     return await message.answer("Пожалуйста, используйте кнопки на клавиатуре.")
 
+
 def register_poll_creation(dp: Dispatcher):
-    dp.register_message_handler(start_poll_creation, text="➕ Создать опрос", state="*")
-    dp.register_message_handler(process_poll_title,   state=PollCreation.waiting_for_title)
-    dp.register_message_handler(process_poll_target,  state=PollCreation.waiting_for_target)
-    dp.register_message_handler(process_question_text, state=PollCreation.waiting_for_question_text)
-    dp.register_message_handler(process_answer_options, state=PollCreation.waiting_for_answer_options)
-    dp.register_message_handler(process_more_questions, state=PollCreation.waiting_for_more_questions)
+    dp.register_message_handler(start_poll_creation,
+                                text="➕ Создать опрос", state="*")
+    dp.register_message_handler(process_poll_title,
+                                state=PollCreation.waiting_for_title)
+    dp.register_message_handler(process_poll_target,
+                                state=PollCreation.waiting_for_target)
+    dp.register_message_handler(process_question_text,
+                                state=PollCreation.waiting_for_question_text)
+    dp.register_message_handler(process_answer_options,
+                                state=PollCreation.waiting_for_answer_options)
+    dp.register_message_handler(process_more_questions,
+                                state=PollCreation.waiting_for_more_questions)
+
+    # Обработка «Назад» на любом этапе PollCreation
+    dp.register_message_handler(
+        lambda msg, state: return_to_main_menu(msg),
+        text=BACK,
+        state=[
+            PollCreation.waiting_for_title,
+            PollCreation.waiting_for_target,
+            PollCreation.waiting_for_question_text,
+            PollCreation.waiting_for_answer_options,
+            PollCreation.waiting_for_more_questions
+        ]
+    )
