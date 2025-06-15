@@ -3,45 +3,56 @@
 from aiogram import types, Dispatcher
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import StatesGroup, State
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.types import (
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardRemove
+)
 from sqlalchemy.future import select
 
+from config import load_config
 from database import AsyncSessionLocal
 from models import User, Group
-from config import ADMIN_IDS, TEACHER_IDS, STUDENT_IDS
+
+# грузим .env
+config = load_config()
 
 class SettingGroup(StatesGroup):
     waiting_for_group = State()
 
-async def add_users_to_db(dp: Dispatcher):
-    """Синхронизируем пользователей из .env с БД при старте."""
-    async with AsyncSessionLocal() as session:
-        users = (await session.execute(select(User))).scalars().all()
-        # ваш код для обновления ролей и добавления новых
-        # (оставляем без изменений)
 
 async def cmd_start(message: types.Message, state: FSMContext):
-    """/start — регистрируем пользователя, спрашиваем группу или рисуем меню."""
+    """
+    /start — регистрируем пользователя (если нужно), спрашиваем группу или рисуем меню.
+    """
+    # отменяем любой активный FSM
     await state.finish()
-    tg = message.from_user.id
+    tg_id = message.from_user.id
 
-    # 1) Убедимся, что пользователь есть в БД
+    # 1) проверяем, есть ли в БД
     async with AsyncSessionLocal() as session:
         user = (await session.execute(
-            select(User).where(User.tg_id == tg)
-        )).scalar()
+            select(User).where(User.tg_id == tg_id)
+        )).scalar_one_or_none()
+
         if not user:
             # роль из .env
-            if   tg in ADMIN_IDS:   role = "admin"
-            elif tg in TEACHER_IDS: role = "teacher"
-            elif tg in STUDENT_IDS: role = "student"
-            else:                   role = "unknown"
-            user = User(tg_id=tg, role=role)
+            if tg_id in config.ADMIN_IDS:
+                role = "admin"
+            elif tg_id in config.TEACHER_IDS:
+                role = "teacher"
+            elif tg_id in config.STUDENT_IDS:
+                role = "student"
+            else:
+                role = "unknown"
+
+            user = User(tg_id=tg_id, role=role)
             session.add(user)
             await session.commit()
 
-    # 2) Если преподаватель/студент и нет группы — спрашиваем группу
+    # 2) если преподаватель или студент без группы — спрашиваем группу
     if user.role in ("teacher", "student") and not user.group_id:
+        # берём все группы из БД
         async with AsyncSessionLocal() as session:
             groups = (await session.execute(select(Group))).scalars().all()
 
@@ -55,43 +66,54 @@ async def cmd_start(message: types.Message, state: FSMContext):
             reply_markup=kb
         )
 
-    # 3) Иначе — сразу главное меню
+    # 3) иначе сразу показываем меню
     return await _send_main_menu(message, user.role)
 
 
 async def process_group_choice(message: types.Message, state: FSMContext):
-    """Обработчик выбора группы сразу после /start."""
-    tg = message.from_user.id
+    """
+    Сохраняем выбранную группу и рисуем меню.
+    """
+    tg_id = message.from_user.id
     choice = message.text.strip()
 
+    # находим группу
     async with AsyncSessionLocal() as session:
         grp = (await session.execute(
             select(Group).where(Group.name == choice)
-        )).scalar()
+        )).scalar_one_or_none()
+
         if not grp:
             return await message.answer("Нажмите кнопку с названием вашей группы.")
 
-        # Сохраняем group_id
+        # сохраняем group_id у пользователя
         await session.execute(
             User.__table__.update()
-            .where(User.tg_id == tg)
+            .where(User.tg_id == tg_id)
             .values(group_id=grp.id)
         )
         await session.commit()
 
+    # завершаем FSM и удаляем клавиатуру
     await state.finish()
-    await message.answer(f"Группа «{grp.name}» сохранена.", reply_markup=ReplyKeyboardRemove())
+    await message.answer(
+        f"Группа «{grp.name}» сохранена.",
+        reply_markup=ReplyKeyboardRemove()
+    )
 
-    # Ещё раз читаем роль и показываем главное меню
+    # перечитываем роль и рисуем главное меню
     async with AsyncSessionLocal() as session2:
         user = (await session2.execute(
-            select(User).where(User.tg_id == tg)
-        )).scalar()
+            select(User).where(User.tg_id == tg_id)
+        )).scalar_one()
+
     return await _send_main_menu(message, user.role)
 
 
 async def _send_main_menu(message: types.Message, role: str):
-    """Рисуем главное меню по роли. Убрана кнопка «Назад» и «Создать группу». """
+    """
+    Рисуем главное меню в зависимости от роли (без кнопки «Назад» и без «➕ Создать группу»).
+    """
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
 
     if role == "admin":
@@ -114,4 +136,7 @@ async def _send_main_menu(message: types.Message, role: str):
 
 def register_start_handlers(dp: Dispatcher):
     dp.register_message_handler(cmd_start, commands=["start"], state="*")
-    dp.register_message_handler(process_group_choice, state=SettingGroup.waiting_for_group)
+    dp.register_message_handler(
+        process_group_choice,
+        state=SettingGroup.waiting_for_group
+    )

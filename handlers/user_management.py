@@ -11,7 +11,7 @@ from database import AsyncSessionLocal
 from models import User
 from handlers.common import BACK, BACK_BTN
 from handlers.start import _send_main_menu
-
+from config import load_config
 
 class UserMgmtStates(StatesGroup):
     choosing_action    = State()
@@ -21,6 +21,32 @@ class UserMgmtStates(StatesGroup):
     confirming_delete  = State()
     editing_user_role  = State()
 
+async def add_users_to_db(dp: Dispatcher):
+    config = load_config()
+    """
+    При старте бота заливаем пользователей из .env (ADMIN_IDS/TEACHER_IDS/STUDENT_IDS)
+    в таблицу users (upsert).
+    """
+    async with AsyncSessionLocal() as session:
+        # вспомогательная функция-апсерта
+        async def upsert(tg_id: int, role: str):
+            existing = (await session.execute(
+                select(User).where(User.tg_id == tg_id)
+            )).scalar_one_or_none()
+            if not existing:
+                session.add(User(tg_id=tg_id, role=role))
+            else:
+                existing.role = role
+
+        for tg in config.ADMIN_IDS:
+            await upsert(tg, "admin")
+        for tg in config.TEACHER_IDS:
+            await upsert(tg, "teacher")
+        for tg in config.STUDENT_IDS:
+            await upsert(tg, "student")
+
+        await session.commit()
+    print("✅ add_users_to_db: users synced from .env")
 
 async def start_user_management(message: types.Message, state: FSMContext):
     tg = message.from_user.id

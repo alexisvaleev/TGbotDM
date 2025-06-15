@@ -8,7 +8,7 @@ from config import load_config
 from database import init_db, AsyncSessionLocal
 from models import Group
 from handlers import register_handlers
-from handlers.start import add_users_to_db
+from handlers.user_management import add_users_to_db
 
 # Конфиг и бот
 config = load_config()
