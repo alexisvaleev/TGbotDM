@@ -7,7 +7,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemo
 from handlers.common import BACK_BTN
 from database import AsyncSessionLocal
 from models import User, Poll, Question, Answer
-from handlers.start import _send_main_menu  # для отображения админ-меню после создания
+from handlers.back import return_to_main_menu
 
 class PollCreation(StatesGroup):
     waiting_for_title            = State()
@@ -16,10 +16,8 @@ class PollCreation(StatesGroup):
     waiting_for_answer_options   = State()
     waiting_for_more_questions   = State()
 
-
 # Временное хранилище вопросов и их вариантов (по user_id)
 poll_creation_buffer: dict[int, list[dict]] = {}
-
 
 async def start_poll_creation(message: types.Message, state: FSMContext):
     tg = message.from_user.id
@@ -38,8 +36,6 @@ async def process_poll_title(message: types.Message, state: FSMContext):
     await state.set_state(PollCreation.waiting_for_target)
     await message.answer("Для кого предназначен опрос?", reply_markup=kb)
 
-
-
 async def process_poll_target(message: types.Message, state: FSMContext):
     target = message.text.lower().strip()
     if target not in ("студенты", "учителя", "все"):
@@ -48,7 +44,6 @@ async def process_poll_target(message: types.Message, state: FSMContext):
     poll_creation_buffer[message.from_user.id] = []
     await state.set_state(PollCreation.waiting_for_question_text)
     await message.answer("Введите текст первого вопроса:", reply_markup=ReplyKeyboardRemove())
-
 
 async def process_question_text(message: types.Message, state: FSMContext):
     uid = message.from_user.id
@@ -65,7 +60,6 @@ async def process_question_text(message: types.Message, state: FSMContext):
         "Если вариантов нет — нажмите ❌ Нет вариантов.",
         reply_markup=kb
     )
-
 
 async def process_answer_options(message: types.Message, state: FSMContext):
     uid = message.from_user.id
@@ -86,7 +80,6 @@ async def process_answer_options(message: types.Message, state: FSMContext):
     # добавляем новый вариант
     last_q["answers"].append(text)
     return await message.answer(f"Вариант добавлен: {text}")
-
 
 async def process_more_questions(message: types.Message, state: FSMContext):
     uid = message.from_user.id
@@ -140,11 +133,10 @@ async def process_more_questions(message: types.Message, state: FSMContext):
 
         # Убираем клавиатуру и показываем админ-меню
         await message.answer("✅ Опрос сохранён!", reply_markup=ReplyKeyboardRemove())
-        return await _send_main_menu(message, role="admin")
+        return await return_to_main_menu(message)
 
     # Прочие сообщения не обрабатываем
     return await message.answer("Пожалуйста, используйте кнопки на клавиатуре.")
-
 
 def register_poll_creation(dp: Dispatcher):
     dp.register_message_handler(start_poll_creation, text="➕ Создать опрос", state="*")

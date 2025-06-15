@@ -7,7 +7,6 @@ from .poll_management  import register_poll_management
 from .poll_editor      import register_poll_editor
 from .poll_edit        import register_poll_edit
 from .poll_take        import register_poll_take
-from .group_management import register_group_management
 
 def register_handlers(dp: Dispatcher):
     register_start_handlers(dp)
@@ -17,7 +16,6 @@ def register_handlers(dp: Dispatcher):
     register_poll_edit(dp)
     register_poll_take(dp)
     register_user_management(dp)
-    register_group_management(dp)
     register_back(dp)  # Регистрируем обработчик кнопки «Назад»
 
 

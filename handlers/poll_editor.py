@@ -3,6 +3,7 @@
 import io
 import csv
 from handlers.common import BACK_BTN
+from handlers.back import return_to_main_menu
 from aiogram import types, Dispatcher
 from aiogram.types import (
     ReplyKeyboardRemove,
@@ -15,7 +16,6 @@ from sqlalchemy import select, delete
 
 from database import AsyncSessionLocal
 from models import User, Poll, Question, Answer, Group
-
 
 class PollEditorStates(StatesGroup):
     choosing_poll         = State()  # выбор опроса
@@ -32,7 +32,6 @@ class PollEditorStates(StatesGroup):
     adding_option         = State()
     choosing_opt_to_del   = State()
     confirming_opt_delete = State()
-
 
 async def start_poll_editor(message: types.Message, state: FSMContext):
     """Шаг 1. Админ нажал «✏️ Редактировать опрос»."""
@@ -59,7 +58,6 @@ async def start_poll_editor(message: types.Message, state: FSMContext):
     await state.set_state(PollEditorStates.choosing_poll)
     await message.answer(text, reply_markup=ReplyKeyboardRemove())
 
-
 async def choose_poll(message: types.Message, state: FSMContext):
     """Шаг 2. Админ вводит номер опроса."""
     data = await state.get_data()
@@ -78,9 +76,9 @@ async def choose_poll(message: types.Message, state: FSMContext):
     kb.add(KeyboardButton("📝 Вопросы"))
     kb.add(KeyboardButton("❌ Готово"))
     kb.add(BACK_BTN)
+    kb.add(BACK_BTN)
     await state.set_state(PollEditorStates.choosing_mode)
     await message.answer("Что будем править?", reply_markup=kb)
-
 
 async def choose_mode(message: types.Message, state: FSMContext):
     """Шаг 3. Выбор режима редактирования."""
@@ -91,6 +89,7 @@ async def choose_mode(message: types.Message, state: FSMContext):
         kb.add(KeyboardButton("👥 Аудитория"))
         kb.add(KeyboardButton("🏷 Группа"))
         kb.add(KeyboardButton("❌ Отмена"))
+        kb.add(BACK_BTN)
         await state.set_state(PollEditorStates.choosing_field)
         return await message.answer("Что правим в параметрах?", reply_markup=kb)
 
@@ -100,13 +99,12 @@ async def choose_mode(message: types.Message, state: FSMContext):
 
     # ❌ Готово
     await state.finish()
-    return await _return_to_admin_menu(message)
-
+    return await return_to_main_menu(message)
 
 # ----- Параметры опроса -----
 
 async def process_field_choice(message: types.Message, state: FSMContext):
-    """Шаг 4. Выбираем что править в параметрах."""
+    """Шаг 4. Выбираем что правим в параметрах."""
     text = message.text.strip()
     if text == "🔤 Название":
         await state.set_state(PollEditorStates.editing_title)
@@ -115,6 +113,7 @@ async def process_field_choice(message: types.Message, state: FSMContext):
     if text == "👥 Аудитория":
         kb = ReplyKeyboardMarkup(resize_keyboard=True)
         kb.add(KeyboardButton("teacher"), KeyboardButton("student"), KeyboardButton("все"))
+        kb.add(BACK_BTN)
         await state.set_state(PollEditorStates.editing_target)
         return await message.answer("Выберите новую аудиторию:", reply_markup=kb)
 
@@ -127,6 +126,7 @@ async def process_field_choice(message: types.Message, state: FSMContext):
         for g in groups:
             kb.add(KeyboardButton(g.name))
         kb.add(KeyboardButton("❌ Без группы"))
+        kb.add(BACK_BTN)
         await state.set_state(PollEditorStates.editing_group)
         return await message.answer("Выберите группу:", reply_markup=kb)
 
@@ -140,7 +140,6 @@ async def process_field_choice(message: types.Message, state: FSMContext):
         ],
         resize_keyboard=True
     ))
-
 
 async def process_edit_title(message: types.Message, state: FSMContext):
     """Шаг 5а. Сохраняем новый заголовок."""
@@ -156,7 +155,6 @@ async def process_edit_title(message: types.Message, state: FSMContext):
         await s.commit()
     await message.answer("✅ Заголовок обновлён.", reply_markup=ReplyKeyboardRemove())
     await _return_to_mode_menu(message, state)
-
 
 async def process_edit_target(message: types.Message, state: FSMContext):
     """Шаг 5б. Сохраняем новую аудиторию."""
@@ -174,7 +172,6 @@ async def process_edit_target(message: types.Message, state: FSMContext):
         await s.commit()
     await message.answer("✅ Аудитория обновлена.", reply_markup=ReplyKeyboardRemove())
     await _return_to_mode_menu(message, state)
-
 
 async def process_edit_group(message: types.Message, state: FSMContext):
     """Шаг 5в. Сохраняем новую группу."""
@@ -198,7 +195,6 @@ async def process_edit_group(message: types.Message, state: FSMContext):
     await message.answer("✅ Группа обновлена.", reply_markup=ReplyKeyboardRemove())
     await _return_to_mode_menu(message, state)
 
-
 # ----- Редактирование вопросов -----
 
 async def _ask_choose_question(message: types.Message, state: FSMContext, poll_id: int):
@@ -215,7 +211,6 @@ async def _ask_choose_question(message: types.Message, state: FSMContext, poll_i
     )
     await state.set_state(PollEditorStates.choosing_question)
     await message.answer(text, reply_markup=ReplyKeyboardRemove())
-
 
 async def choose_question(message: types.Message, state: FSMContext):
     """Шаг 6. Админ выбирает вопрос."""
@@ -234,9 +229,9 @@ async def choose_question(message: types.Message, state: FSMContext):
     kb.add(KeyboardButton("➕ Добавить вариант"))
     kb.add(KeyboardButton("✂️ Удалить вариант"))
     kb.add(KeyboardButton("❌ Готово"))
+    kb.add(BACK_BTN)
     await state.set_state(PollEditorStates.action_menu)
     await message.answer("Выберите действие с вопросом:", reply_markup=kb)
-
 
 async def action_menu_handler(message: types.Message, state: FSMContext):
     """Шаг 7. Меню действий над вопросом."""
@@ -266,7 +261,6 @@ async def action_menu_handler(message: types.Message, state: FSMContext):
     await state.set_state(PollEditorStates.choosing_mode)
     return await choose_mode(message, state)
 
-
 async def process_editing_q_text(message: types.Message, state: FSMContext):
     """Шаг 8а. Сохраняем новый текст вопроса."""
     new_text = message.text.strip()
@@ -282,7 +276,6 @@ async def process_editing_q_text(message: types.Message, state: FSMContext):
     await message.answer("✅ Текст вопроса обновлён.", reply_markup=ReplyKeyboardRemove())
     await _return_to_actions(message, state)
 
-
 async def process_adding_option(message: types.Message, state: FSMContext):
     """Шаг 8б. Добавляем новый вариант ответа."""
     opt_text = message.text.strip()
@@ -293,7 +286,6 @@ async def process_adding_option(message: types.Message, state: FSMContext):
         await s.commit()
     await message.answer(f"✅ Вариант '{opt_text}' добавлен.", reply_markup=ReplyKeyboardRemove())
     await _return_to_actions(message, state)
-
 
 async def choose_option_to_delete(message: types.Message, state: FSMContext):
     """Шаг 8в. Выбираем вариант для удаления."""
@@ -315,7 +307,6 @@ async def choose_option_to_delete(message: types.Message, state: FSMContext):
     await state.set_state(PollEditorStates.confirming_opt_delete)
     await message.answer(f"Удалить вариант '{answer.answer_text}'?", reply_markup=kb)
 
-
 async def confirm_option_delete(message: types.Message, state: FSMContext):
     """Шаг 8г. Подтверждаем удаление варианта."""
     ans = message.text.strip()
@@ -330,7 +321,6 @@ async def confirm_option_delete(message: types.Message, state: FSMContext):
         await message.answer("❌ Удаление отменено.", reply_markup=ReplyKeyboardRemove())
     await _return_to_actions(message, state)
 
-
 # ====== Вспомогательные ======
 
 async def _return_to_mode_menu(message: types.Message, state: FSMContext):
@@ -342,7 +332,6 @@ async def _return_to_mode_menu(message: types.Message, state: FSMContext):
     await state.set_state(PollEditorStates.choosing_mode)
     await message.answer("Что правим дальше?", reply_markup=kb)
 
-
 async def _return_to_actions(message: types.Message, state: FSMContext):
     """После правки вопроса возвращаем меню действий над вопросом."""
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
@@ -353,17 +342,8 @@ async def _return_to_actions(message: types.Message, state: FSMContext):
     await state.set_state(PollEditorStates.action_menu)
     await message.answer("Выберите действие:", reply_markup=kb)
 
-
 async def _return_to_admin_menu(message: types.Message):
-    """Главное меню админа."""
-    kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add(KeyboardButton("📊 Статистика"))
-    kb.add(KeyboardButton("➕ Создать опрос"), KeyboardButton("🗑 Удалить опрос"))
-    kb.add(KeyboardButton("✏️ Редактировать опрос"), KeyboardButton("📝 Редактировать вопросы"))
-    kb.add(KeyboardButton("📥 Экспорт результатов"))
-    kb.add(KeyboardButton("👥 Управление пользователями"))
-    await message.answer("Выберите действие:", reply_markup=kb)
-
+    await return_to_main_menu(message)
 
 def register_poll_editor(dp: Dispatcher):
     dp.register_message_handler(start_poll_editor, text="✏️ Редактировать опрос", state="*")

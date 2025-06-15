@@ -7,6 +7,7 @@ from sqlalchemy.future import select
 from database import AsyncSessionLocal
 from models import Poll, Group, User
 from handlers.common import BACK_BTN
+from handlers.back import return_to_main_menu
 
 class EditPollStates(StatesGroup):
     choosing_poll   = State()  # выбираем опрос
@@ -14,7 +15,6 @@ class EditPollStates(StatesGroup):
     editing_title   = State()  # ввод нового заголовка
     editing_target  = State()  # выбор новой целевой аудитории
     editing_group   = State()  # выбор новой группы
-
 
 async def start_edit_poll(message: types.Message, state: FSMContext):
     """Шаг 1. Админ нажал «✏️ Редактировать опрос»."""
@@ -56,6 +56,7 @@ async def choose_edit_poll(message: types.Message, state: FSMContext):
     kb.add(KeyboardButton("👥 Целевая аудитория"))
     kb.add(KeyboardButton("🏷 Группа"))
     kb.add(KeyboardButton("❌ Отмена"))
+    kb.add(BACK_BTN)
     await state.set_state(EditPollStates.choosing_field)
     await message.answer("Что хотите изменить?", reply_markup=kb)
 
@@ -68,6 +69,7 @@ async def choose_edit_field(message: types.Message, state: FSMContext):
     if text == "👥 Целевая аудитория":
         kb = ReplyKeyboardMarkup(resize_keyboard=True)
         kb.add(KeyboardButton("teacher"), KeyboardButton("student"), KeyboardButton("все"))
+        kb.add(BACK_BTN)
         await state.set_state(EditPollStates.editing_target)
         return await message.answer("Выберите новую аудиторию:", reply_markup=kb)
     if text == "🏷 Группа":
@@ -80,11 +82,12 @@ async def choose_edit_field(message: types.Message, state: FSMContext):
         for g in groups:
             kb.add(KeyboardButton(g.name))
         kb.add(KeyboardButton("❌ Без группы"))
+        kb.add(BACK_BTN)
         await state.set_state(EditPollStates.editing_group)
         return await message.answer("Выберите группу для опроса:", reply_markup=kb)
     # Отмена
     await state.finish()
-    await return_to_admin_menu(message)
+    await return_to_main_menu(message)
     await message.answer("❌ Редактирование отменено.", reply_markup=ReplyKeyboardRemove())
 
 async def process_edit_title(message: types.Message, state: FSMContext):
@@ -101,8 +104,7 @@ async def process_edit_title(message: types.Message, state: FSMContext):
         await session.commit()
     await message.answer("✅ Название опроса обновлено.", reply_markup=ReplyKeyboardRemove())
     await state.finish()
-    await return_to_admin_menu(message)
-
+    await return_to_main_menu(message)
 
 async def process_edit_target(message: types.Message, state: FSMContext):
     """Шаг 4б. Обновляем целевую аудиторию."""
@@ -120,8 +122,7 @@ async def process_edit_target(message: types.Message, state: FSMContext):
         await session.commit()
     await message.answer("✅ Целевая аудитория обновлена.", reply_markup=ReplyKeyboardRemove())
     await state.finish()
-    await return_to_admin_menu(message)
-
+    await return_to_main_menu(message)
 
 async def process_edit_group(message: types.Message, state: FSMContext):
     """Шаг 4в. Обновляем группу."""
@@ -147,16 +148,7 @@ async def process_edit_group(message: types.Message, state: FSMContext):
 
     await message.answer("✅ Группа опроса обновлена.", reply_markup=ReplyKeyboardRemove())
     await state.finish()
-    await return_to_admin_menu(message)
-
-async def return_to_admin_menu(message: types.Message):
-    """Отправляем кнопки админа."""
-    kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add(KeyboardButton("📊 Статистика"))
-    kb.add(KeyboardButton("➕ Создать опрос"), KeyboardButton("🗑 Удалить опрос"))
-    kb.add(KeyboardButton("✏️ Редактировать опрос"), KeyboardButton("📥 Экспорт результатов"))
-    kb.add(KeyboardButton("👥 Управление пользователями"))
-    await message.answer("Выберите действие:", reply_markup=kb)
+    await return_to_main_menu(message)
 
 def register_poll_edit(dp: Dispatcher):
     dp.register_message_handler(start_edit_poll, text="✏️ Редактировать опрос", state="*")

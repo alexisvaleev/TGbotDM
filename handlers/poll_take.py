@@ -15,7 +15,6 @@ class PollTaking(StatesGroup):
     choosing_poll       = State()
     answering_questions = State()
 
-
 async def start_poll_taking(message: types.Message, state: FSMContext):
     await state.finish()
     await message.answer("Ищем доступные опросы…", reply_markup=ReplyKeyboardRemove())
@@ -40,11 +39,10 @@ async def start_poll_taking(message: types.Message, state: FSMContext):
     kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     for i, p in enumerate(polls, 1):
         kb.add(KeyboardButton(f"{i}. {p.title}"))
+    kb.add(BACK_BTN)
     await state.update_data(poll_ids=[p.id for p in polls])
     await PollTaking.choosing_poll.set()
     await message.answer("Выберите опрос:", reply_markup=kb)
-    kb.add(BACK_BTN)
-
 
 async def choose_poll(message: types.Message, state: FSMContext):
     data = await state.get_data()
@@ -73,7 +71,6 @@ async def choose_poll(message: types.Message, state: FSMContext):
     await PollTaking.answering_questions.set()
     await _ask_question(message, state)
 
-
 async def _ask_question(message: types.Message, state: FSMContext):
     data = await state.get_data()
     q_ids = data["question_ids"]
@@ -93,11 +90,10 @@ async def _ask_question(message: types.Message, state: FSMContext):
         kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
         for a in answers:
             kb.add(KeyboardButton(a.answer_text))
-        await message.answer(f"❓ {q_obj.question_text}", reply_markup=kb)
         kb.add(BACK_BTN)
+        await message.answer(f"❓ {q_obj.question_text}", reply_markup=kb)
     else:
         await message.answer(f"❓ {q_obj.question_text}", reply_markup=ReplyKeyboardRemove())
-
 
 async def process_answer(message: types.Message, state: FSMContext):
     data    = await state.get_data()
@@ -133,7 +129,6 @@ async def process_answer(message: types.Message, state: FSMContext):
     await state.update_data(q_index=idx+1)
     await _ask_question(message, state)
 
-
 async def _finish_poll(message: types.Message, state: FSMContext):
     data    = await state.get_data()
     prog_id = data["progress_id"]
@@ -146,7 +141,6 @@ async def _finish_poll(message: types.Message, state: FSMContext):
         await s.commit()
     await message.answer("🎉 Готово!", reply_markup=ReplyKeyboardRemove())
     await state.finish()
-
 
 def register_poll_take(dp: Dispatcher):
     dp.register_message_handler(start_poll_taking, text="📋 Пройти опрос", state="*")
