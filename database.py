@@ -2,8 +2,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 from config import load_config
 
+cfg = load_config()
 Base = declarative_base()
-cfg  = load_config()
 
 DATABASE_URL = (
     f"postgresql+asyncpg://"
@@ -12,10 +12,15 @@ DATABASE_URL = (
 )
 
 engine = create_async_engine(DATABASE_URL, echo=False)
-AsyncSessionLocal = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+AsyncSessionLocal = sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False
+)
 
 async def init_db():
-    import models   # чтобы зарегистрировать все таблицы
+    # регистрируем все таблицы
+    import models
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     print("✅ Все таблицы созданы (или уже были)")

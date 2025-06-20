@@ -4,12 +4,14 @@ from sqlalchemy.future import select
 
 from database import AsyncSessionLocal
 from models import User
-from handlers.menu import send_main_menu
+from .menu import send_main_menu
 
 async def cmd_start(message: types.Message):
     tg = message.from_user.id
     async with AsyncSessionLocal() as s:
-        me = (await s.execute(select(User).where(User.tg_id==tg))).scalar_one_or_none()
+        me = (await s.execute(
+            select(User).where(User.tg_id == tg)
+        )).scalar_one_or_none()
     if not me:
         return await message.answer(
             "⛔ Вы не зарегистрированы. Обратитесь к администратору.",

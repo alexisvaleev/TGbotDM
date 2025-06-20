@@ -6,37 +6,39 @@ from sqlalchemy.future import select
 
 from database import AsyncSessionLocal
 from models import User
-from handlers.common           import BACK
-from handlers.user_management  import cmd_view_users, start_add_user
-from handlers.group_management import start_group_creation, start_group_assignment
-from handlers.poll_creation    import start_poll_creation
-from handlers.poll_editor      import start_poll_editor
-from handlers.poll_management  import start_delete_poll
-from handlers.poll_statistics  import start_stats
-from handlers.poll_take        import start_take_poll
+from .common           import BACK
+from .user_management  import cmd_view_users, start_add_user, start_delete_user
+from .group_management import start_group_creation, start_group_assignment
+from .poll_creation    import start_poll_creation
+from .poll_editor      import start_poll_editor
+from .poll_management  import start_delete_poll
+from .poll_statistics  import start_stats
+from .poll_take        import start_take_poll
 
-# Тексты кнопок главного меню
+# Главные кнопки
 USERS_BTN   = "👥 Пользователи"
 POLLS_BTN   = "📝 Опросы"
 GROUPS_BTN  = "🏷 Группы"
-REPORTS_BTN = "📈 Отчёты"
+STATISTICS_BTN = "📊 Статистика"
 
-async def _get_role(tg: int) -> Optional[str]:
+
+async def _get_role(tg_id: int) -> Optional[str]:
     async with AsyncSessionLocal() as s:
-        me = (await s.execute(select(User).where(User.tg_id == tg))).scalar_one_or_none()
+        me = (await s.execute(
+            select(User).where(User.tg_id == tg_id)
+        )).scalar_one_or_none()
     return me.role if me else None
 
 async def send_main_menu(message: types.Message):
     role = await _get_role(message.from_user.id)
     kb   = ReplyKeyboardMarkup(resize_keyboard=True)
-
     if role == "admin":
-        kb.add(USERS_BTN, POLLS_BTN).add(GROUPS_BTN, REPORTS_BTN)
+        kb.add(USERS_BTN, POLLS_BTN).add(GROUPS_BTN, STATISTICS_BTN)
     elif role == "teacher":
-        kb.add(USERS_BTN, POLLS_BTN).add(GROUPS_BTN, "📋 Пройти опрос")
+        kb.add(USERS_BTN, POLLS_BTN).add(GROUPS_BTN, STATISTICS_BTN)
+        kb.add("📋 Пройти опрос")
     else:
         kb.add("📋 Пройти опрос")
-
     logging.info(f"send_main_menu: role={role}")
     await message.answer("Выберите раздел:", reply_markup=kb)
 
@@ -44,40 +46,48 @@ async def route_menu(message: types.Message):
     txt = message.text.strip()
     logging.info(f"route_menu got: {txt!r}")
 
-    # — главное меню →
+    # Пользователи
     if txt == USERS_BTN:
         kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        kb.add("Просмотр пользователей","➕ Добавить пользователя","✏️ Редактировать пользователя").add(BACK)
+        kb.add("Просмотр пользователей",
+               "➕ Добавить пользователя",
+               "✏️ Редактировать пользователя", "🗑 Удалить пользователя")\
+          .add(BACK)
         return await message.answer("Пользователи:", reply_markup=kb)
 
+    # Опросы
     if txt == POLLS_BTN:
         kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        kb.add("➕ Создать опрос","✏️ Редактировать опрос").add("🗑 Удалить опрос", BACK)
+        kb.add("➕ Создать опрос","✏️ Редактировать опрос")\
+          .add("🗑 Удалить опрос", BACK)
         return await message.answer("Опросы:", reply_markup=kb)
 
+    # Группы
     if txt == GROUPS_BTN:
         kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        kb.add("➕ Создать группу","🔀 Назначить группу").add(BACK)
+        kb.add("➕ Создать группу","🔀 Назначить группу")\
+          .add(BACK)
         return await message.answer("Группы:", reply_markup=kb)
 
-    if txt == REPORTS_BTN:
-        kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        kb.add("📊 Статистика").add(BACK)
-        return await message.answer("Отчёты:", reply_markup=kb)
+    # Отчёты
+    if txt == STATISTICS_BTN:
+        return await start_stats(message, None)
 
-    # — подменю Пользователи →
+    # Подменю – Пользователи
     if txt == "Просмотр пользователей":
         return await cmd_view_users(message)
     if txt in ("➕ Добавить пользователя","✏️ Редактировать пользователя"):
         return await start_add_user(message, None)
+    if txt == "🗑 Удалить пользователя":
+        return await start_delete_user(message, None)
 
-    # — подменю Группы →
+    # Подменю – Группы
     if txt == "➕ Создать группу":
         return await start_group_creation(message, None)
     if txt == "🔀 Назначить группу":
         return await start_group_assignment(message, None)
 
-    # — подменю Опросы →
+    # Подменю – Создание опроса
     if txt == "➕ Создать опрос":
         return await start_poll_creation(message, None)
     if txt == "✏️ Редактировать опрос":
@@ -85,19 +95,18 @@ async def route_menu(message: types.Message):
     if txt == "🗑 Удалить опрос":
         return await start_delete_poll(message, None)
 
-    # — подменю Отчёты →
+    # Подменю – Статистика
     if txt == "📊 Статистика":
         return await start_stats(message, None)
 
-    # — студенты: пройти опрос →
+    # Студенты – Пройти опрос
     if txt == "📋 Пройти опрос":
         return await start_take_poll(message, None)
 
-    # назад
+    # Назад
     if txt == BACK:
         return await send_main_menu(message)
 
-    # иначе – игнор
     logging.info("route_menu: no match")
     return
 
@@ -105,6 +114,5 @@ def register_menu(dp: Dispatcher):
     dp.register_message_handler(
         route_menu,
         content_types=types.ContentTypes.TEXT,
-        state=None
+        state=None   # только когда нет активного FSM
     )
-

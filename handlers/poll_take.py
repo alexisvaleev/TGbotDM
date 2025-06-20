@@ -2,188 +2,194 @@
 
 from aiogram import types, Dispatcher
 from aiogram.dispatcher import FSMContext
-from aiogram.dispatcher.filters.state import State, StatesGroup
-from aiogram.types import (
-    ReplyKeyboardRemove,
-    ReplyKeyboardMarkup,
-    KeyboardButton
-)
-from sqlalchemy import or_
+from aiogram.dispatcher.filters.state import StatesGroup, State
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from models import PollCompletion
 from sqlalchemy.future import select
 
 from database import AsyncSessionLocal
-from models import (
-    User,
-    Poll,
-    Question,
-    Answer,
-    UserPollProgress,
-    UserAnswer
-)
-from handlers.common import BACK, BACK_BTN
-from handlers.back import return_to_main_menu
+from models import Poll, Question, Answer, Response, User
+from .common import BACK, BACK_BTN
+from .back   import return_to_main_menu
 
-
-class TakePollStates(StatesGroup):
+class PollTakeStates(StatesGroup):
     choosing_poll = State()
     answering     = State()
 
-
 async def start_take_poll(message: types.Message, state: FSMContext):
-    """Запускается по кнопке 📋 Пройти опрос."""
     await state.finish()
-    tg_id = message.from_user.id
+    tg = message.from_user.id
 
-    # грузим пользователя
     async with AsyncSessionLocal() as s:
         me = (await s.execute(
-            select(User).where(User.tg_id == tg_id)
+            select(User).where(User.tg_id == tg)
         )).scalar_one_or_none()
 
-    # разрешаем и студентам, и учителям
-    if not me or me.role not in ("student", "teacher"):
-        return await message.answer("⛔ Только студент или преподаватель может проходить опросы.")
+        if not me:
+            return await message.answer("⛔ Вы не зарегистрированы.", reply_markup=BACK_BTN)
 
-    await message.answer("🔍 Ищем доступные опросы…")
+        role = me.role
 
-    # ищем опросы, которые:
-    # – таргетятся на эту роль или на всех
-    # – и либо без группы, либо на группу пользователя
-    async with AsyncSessionLocal() as s:
-        q = select(Poll).where(
-            Poll.target_role.in_([me.role, "all"]),
-            or_(Poll.group_id.is_(None), Poll.group_id == me.group_id)
-        )
-        polls = (await s.execute(q)).scalars().all()
-
-        # исключаем уже пройденные
-        done = (await s.execute(
-            select(UserPollProgress.poll_id).where(UserPollProgress.user_id == me.id)
+        completed = (await s.execute(
+            select(PollCompletion.poll_id)
+            .where(PollCompletion.user_id == tg)
         )).scalars().all()
-    polls = [p for p in polls if p.id not in done]
+
+        polls = (await s.execute(
+            select(Poll)
+            .where(
+                Poll.target_role.in_([role, "all"]),
+                ~Poll.id.in_(completed)
+            )
+        )).scalars().all()
 
     if not polls:
         return await message.answer("🚫 Нет доступных опросов.", reply_markup=BACK_BTN)
 
-    # рисуем клавиатуру выбора
     kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    for i, p in enumerate(polls, start=1):
-        kb.add(KeyboardButton(f"{i}. {p.title}"))
-    kb.add(BACK_BTN)
+    for p in polls:
+        kb.add(p.title)
+    kb.add(BACK)
 
-    await state.update_data(poll_ids=[p.id for p in polls])
-    await TakePollStates.choosing_poll.set()
-    await message.answer("Выберите опрос:", reply_markup=kb)
+    await PollTakeStates.choosing_poll.set()
+    await message.answer("Выберите опрос для прохождения:", reply_markup=kb)
 
-
-async def choose_poll_to_take(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    poll_ids = data.get("poll_ids", [])
-    text = message.text.strip()
-
-    if text == BACK:
-        await state.finish()
-        return await return_to_main_menu(message)
-    if not text.split(".", 1)[0].isdigit():
-        return await message.answer("Пожалуйста, выберите опрос кнопкой.", reply_markup=BACK_BTN)
-
-    idx = int(text.split(".", 1)[0]) - 1
-    if idx < 0 or idx >= len(poll_ids):
-        return await message.answer("Неверный номер.", reply_markup=BACK_BTN)
-
-    poll_id = poll_ids[idx]
-    await state.update_data(chosen_poll=poll_id)
-
-    # стартуем проход
-    return await _ask_next_question(message, state)
-
-
-async def _ask_next_question(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    poll_id = data["chosen_poll"]
-    tg_id   = message.from_user.id
-
-    # получаем пользователя и прогресс
-    async with AsyncSessionLocal() as s:
-        me = (await s.execute(
-            select(User).where(User.tg_id == tg_id)
-        )).scalar_one()
-        prog = (await s.execute(
-            select(UserPollProgress).where(
-                UserPollProgress.user_id == me.id,
-                UserPollProgress.poll_id == poll_id
-            )
-        )).scalar_one_or_none()
-
-        # если ещё нет – создаём
-        if not prog:
-            prog = UserPollProgress(user_id=me.id, poll_id=poll_id, last_question_id=None)
-            s.add(prog)
-            await s.flush()
-
-        # ищем очередной вопрос
-        q = select(Question).where(Question.poll_id == poll_id)
-        if prog.last_question_id:
-            q = q.where(Question.id > prog.last_question_id)
-        q = q.order_by(Question.id).limit(1)
-        next_q = (await s.execute(q)).scalar_one_or_none()
-
-        # если вопросов нет – завершаем
-        if not next_q:
-            prog.is_completed = 1
-            await s.commit()
-            await message.answer("✅ Вы успешно прошли опрос!", reply_markup=ReplyKeyboardRemove())
-            await state.finish()
-            return await return_to_main_menu(message)
-
-        # задаём вопрос
-        prog.last_question_id = next_q.id
-        await s.commit()
-
-        # строим клавиатуру вариантов (если есть)
-        if next_q.question_type == "single_choice":
-            opts = (await s.execute(
-                select(Answer).where(Answer.question_id == next_q.id)
-            )).scalars().all()
-            kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-            for o in opts:
-                kb.add(KeyboardButton(o.answer_text))
-            kb.add(BACK_BTN)
-            await state.update_data(current_q=next_q.id)
-            await TakePollStates.answering.set()
-            return await message.answer(next_q.question_text, reply_markup=kb)
-
-        # иначе просто текстовый ввод
-        await state.update_data(current_q=next_q.id)
-        await TakePollStates.answering.set()
-        return await message.answer(next_q.question_text, reply_markup=BACK_BTN)
-
-
-async def process_answer(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    txt    = message.text.strip()
-    q_id   = data.get("current_q")
-    p_id   = data.get("chosen_poll")
-    tg_id  = message.from_user.id
-
-    # BACK?
+async def process_poll_choice(message: types.Message, state: FSMContext):
+    """
+    Шаг 2: получили название опроса → готовим список вопросов и отправляем первый.
+    """
+    txt = message.text.strip()
     if txt == BACK:
         await state.finish()
         return await return_to_main_menu(message)
 
-    # сохраняем ответ
+    # Находим опрос
     async with AsyncSessionLocal() as s:
-        me = (await s.execute(
-            select(User).where(User.tg_id == tg_id)
+        poll = (await s.execute(
+            select(Poll).where(Poll.title == txt)
+        )).scalar_one_or_none()
+    if not poll:
+        return await message.answer("❌ Опрос не найден.", reply_markup=BACK_BTN)
+
+    # Загружаем все вопросы
+    async with AsyncSessionLocal() as s:
+        qs = (await s.execute(
+            select(Question).where(Question.poll_id == poll.id)
+        )).scalars().all()
+    if not qs:
+        return await message.answer("🚫 В этом опросе нет вопросов.", reply_markup=BACK_BTN)
+
+    # Сохраняем в FSM: id опроса, список id вопросов и начальный индекс
+    await state.update_data(
+        poll_id=poll.id,
+        question_ids=[q.id for q in qs],
+        index=0
+    )
+
+    # Спрашиваем первый вопрос
+    await _send_current_question(message, state)
+
+async def _send_current_question(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    idx = data["index"]
+    q_id = data["question_ids"][idx]
+
+    # Достаём вопрос
+    async with AsyncSessionLocal() as s:
+        q = (await s.execute(
+            select(Question).where(Question.id == q_id)
         )).scalar_one()
-        s.add(UserAnswer(user_id=me.id, question_id=q_id, answer_text=txt))
+
+    # Если вариантный
+    if q.question_type == "single_choice":
+        async with AsyncSessionLocal() as s:
+            opts = (await s.execute(
+                select(Answer).where(Answer.question_id == q_id)
+            )).scalars().all()
+        kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+        for o in opts:
+            kb.add(o.answer_text)
+        kb.add(BACK)
+        await PollTakeStates.answering.set()
+        await message.answer(q.question_text, reply_markup=kb)
+    else:
+        # Текстовый ответ
+        await PollTakeStates.answering.set()
+        await message.answer(q.question_text, reply_markup=ReplyKeyboardRemove())
+
+async def process_answer(message: types.Message, state: FSMContext):
+    """
+    Шаг 3: сохраняем ответ и продолжаем или завершаем опрос.
+    """
+    txt = message.text.strip()
+    data = await state.get_data()
+    idx  = data["index"]
+    q_id = data["question_ids"][idx]
+    tg   = message.from_user.id
+
+    # Назад?
+    if txt == BACK:
+        await state.finish()
+        return await return_to_main_menu(message)
+
+    # Получаем сам вопрос
+    async with AsyncSessionLocal() as s:
+        q = (await s.execute(
+            select(Question).where(Question.id == q_id)
+        )).scalar_one()
+
+    # Определяем, какой ответ сохранять
+    answer_id    = None
+    response_txt = None
+    if q.question_type == "single_choice":
+        # Находим объект Answer по тексту
+        async with AsyncSessionLocal() as s:
+            a = (await s.execute(
+                select(Answer)
+                .where(Answer.question_id == q_id)
+                .where(Answer.answer_text  == txt)
+            )).scalar_one_or_none()
+        if not a:
+            return await message.answer("❌ Используйте кнопки.", reply_markup=BACK_BTN)
+        answer_id = a.id
+    else:
+        response_txt = txt
+
+    # Записываем в таблицу responses
+    async with AsyncSessionLocal() as s:
+        s.add(Response(
+            user_id        = tg,
+            question_id    = q_id,
+            answer_id      = answer_id,
+            response_text  = response_txt
+        ))
         await s.commit()
 
-    # и задаём следующий
-    return await _ask_next_question(message, state)
+    # Переходим к следующему вопросу
+    idx += 1
+    if idx >= len(data["question_ids"]):
+        # Отмечаем прохождение опроса
+        async with AsyncSessionLocal() as s:
+            s.add(PollCompletion(user_id=tg, poll_id=data["poll_id"]))
+            await s.commit()
+        await state.finish()
+        await message.answer("✅ Вы завершили опрос!", reply_markup=BACK_BTN)
+        return await return_to_main_menu(message)
 
+    await state.update_data(index=idx)
+    return await _send_current_question(message, state)
 
 def register_poll_take(dp: Dispatcher):
-    dp.register_message_handler(start_take_poll, text="📋 Пройти опрос", state="*")
-    dp.register_message_handler(choose_poll_to_take, state=TakePollStates.choosing_poll)
-    dp.register_message_handler(process_answer,     state=TakePollStates.answering)
+    dp.register_message_handler(
+        start_take_poll,
+        text="📋 Пройти опрос",
+        state=None
+    )
+    dp.register_message_handler(
+        process_poll_choice,
+        state=PollTakeStates.choosing_poll
+    )
+    dp.register_message_handler(
+        process_answer,
+        state=PollTakeStates.answering
+    )

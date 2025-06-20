@@ -46,7 +46,7 @@ async def start_poll_editor(message: types.Message, state: FSMContext):
     kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     for i, p in enumerate(polls, 1):
         kb.add(KeyboardButton(f"{i}. {p.title}"))
-    kb.add(BACK_BTN)
+    kb.add(BACK)
 
     await state.update_data(poll_ids=[p.id for p in polls])
     await PollEditorStates.choosing_poll.set()
@@ -75,7 +75,7 @@ async def choose_poll(message: types.Message, state: FSMContext):
     kb.add(KeyboardButton("🔤 Параметры опроса"))
     kb.add(KeyboardButton("📝 Вопросы"))
     kb.add(KeyboardButton("❌ Готово"))
-    kb.add(BACK_BTN)
+    kb.add(BACK)
 
     await PollEditorStates.choosing_mode.set()
     await message.answer("Что будем править?", reply_markup=kb)
@@ -93,7 +93,7 @@ async def choose_mode(message: types.Message, state: FSMContext):
         kb.add(KeyboardButton("🔤 Название"))
         kb.add(KeyboardButton("👥 Аудитория"))
         kb.add(KeyboardButton("🏷 Группа"))
-        kb.add(BACK_BTN)
+        kb.add(BACK)
 
         await PollEditorStates.choosing_field.set()
         return await message.answer("Что правим в параметрах?", reply_markup=kb)
@@ -122,7 +122,7 @@ async def process_field_choice(message: types.Message, state: FSMContext):
     if txt == "👥 Аудитория":
         kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
         kb.add(KeyboardButton("студенты"), KeyboardButton("учителя"), KeyboardButton("все"))
-        kb.add(BACK_BTN)
+        kb.add(BACK)
 
         await PollEditorStates.editing_target.set()
         return await message.answer("Выберите новую аудиторию:", reply_markup=kb)
@@ -137,7 +137,7 @@ async def process_field_choice(message: types.Message, state: FSMContext):
         for g in groups:
             kb.add(KeyboardButton(g.name))
         kb.add(KeyboardButton("❌ Без группы"))
-        kb.add(BACK_BTN)
+        kb.add(BACK)
 
         await PollEditorStates.editing_group.set()
         return await message.answer("Выберите группу:", reply_markup=kb)
@@ -225,7 +225,7 @@ async def _ask_choose_question(message: types.Message, state: FSMContext, poll_i
     kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     for i, q in enumerate(qs, 1):
         kb.add(KeyboardButton(f"{i}. {q.question_text}"))
-    kb.add(BACK_BTN)
+    kb.add(BACK)
 
     await state.update_data(question_ids=[q.id for q in qs])
     await PollEditorStates.choosing_question.set()
@@ -253,7 +253,7 @@ async def choose_question(message: types.Message, state: FSMContext):
     kb.add(KeyboardButton("➕ Добавить вариант"))
     kb.add(KeyboardButton("✂️ Удалить вариант"))
     kb.add(KeyboardButton("❌ Готово"))
-    kb.add(BACK_BTN)
+    kb.add(BACK)
 
     await PollEditorStates.action_menu.set()
     await message.answer("Выберите действие с вопросом:", reply_markup=kb)
@@ -284,7 +284,7 @@ async def action_menu_handler(message: types.Message, state: FSMContext):
         kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
         for i, opt in enumerate(opts, 1):
             kb.add(KeyboardButton(f"{i}. {opt.answer_text}"))
-        kb.add(BACK_BTN)
+        kb.add(BACK)
 
         await PollEditorStates.choosing_opt_to_del.set()
         return await message.answer("Выберите вариант для удаления:", reply_markup=kb)
@@ -350,7 +350,7 @@ async def choose_option_to_delete(message: types.Message, state: FSMContext):
     await state.update_data(del_opt_id=opts[idx].id)
     kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     kb.add(KeyboardButton("✅ Да"), KeyboardButton("❌ Нет"))
-    kb.add(BACK_BTN)
+    kb.add(BACK)
 
     await PollEditorStates.confirming_opt_delete.set()
     await message.answer(f"Удалить вариант «{opts[idx].answer_text}»?", reply_markup=kb)
@@ -380,7 +380,7 @@ async def _return_to_mode_menu(message: types.Message, state: FSMContext):
     kb.add(KeyboardButton("🔤 Параметры опроса"))
     kb.add(KeyboardButton("📝 Вопросы"))
     kb.add(KeyboardButton("❌ Готово"))
-    kb.add(BACK_BTN)
+    kb.add(BACK)
     await PollEditorStates.choosing_mode.set()
     return await message.answer("Что правим дальше?", reply_markup=kb)
 
@@ -390,7 +390,7 @@ async def _return_to_actions(message: types.Message, state: FSMContext):
     kb.add(KeyboardButton("➕ Добавить вариант"))
     kb.add(KeyboardButton("✂️ Удалить вариант"))
     kb.add(KeyboardButton("❌ Готово"))
-    kb.add(BACK_BTN)
+    kb.add(BACK)
     await PollEditorStates.action_menu.set()
     return await message.answer("Выберите действие с вопросом:", reply_markup=kb)
 
