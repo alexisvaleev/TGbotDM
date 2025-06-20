@@ -4,70 +4,80 @@ from collections import Counter
 from aiogram import types, Dispatcher
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from sqlalchemy.future import select
 
 from database import AsyncSessionLocal
-from handlers.common import BACK_BTN
-from handlers.back import return_to_main_menu
-from handlers.start import _send_main_menu
 from models import User, Poll, Question, Answer, UserAnswer
+from handlers.common import BACK, BACK_BTN
+from handlers.back import return_to_main_menu
+
 
 class StatsStates(StatesGroup):
     choosing_poll = State()
 
 
 async def start_stats(message: types.Message, state: FSMContext):
-    """Запускает выбор опроса для просмотра статистики."""
+    """
+    Запускается по кнопке 📊 Статистика.
+    Только admin и teacher могут просматривать.
+    """
     await state.finish()
     tg = message.from_user.id
 
-    # Проверяем, что это админ
+    # проверяем роль
     async with AsyncSessionLocal() as s:
-        user = (await s.execute(
+        me = (await s.execute(
             select(User).where(User.tg_id == tg)
         )).scalar_one_or_none()
-    if not user or user.role != "admin":
-        return await message.answer("⛔ Только админ может смотреть статистику.")
 
-    # Загружаем все опросы
+    if not me or me.role not in ("admin", "teacher"):
+        return await message.answer(
+            "⛔ Только админ или преподаватель может смотреть статистику."
+        )
+
+    # загружаем все опросы
     async with AsyncSessionLocal() as s:
         polls = (await s.execute(select(Poll))).scalars().all()
-    if not polls:
-        return await message.answer("Нет опросов для статистики.", reply_markup=BACK_BTN)
 
-    # Строим клавиатуру с опросами
+    if not polls:
+        return await message.answer("🚫 Нет опросов для статистики.", reply_markup=BACK_BTN)
+
+    # строим клавиатуру выбора
     kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     for idx, p in enumerate(polls, start=1):
         kb.add(KeyboardButton(f"{idx}. {p.title}"))
     kb.add(BACK_BTN)
 
-    # Сохраняем ID-список и переводим FSM в выбор
+    # сохраняем список id и переходим в state
     await state.update_data(poll_ids=[p.id for p in polls])
     await StatsStates.choosing_poll.set()
     await message.answer("Выберите опрос для просмотра статистики:", reply_markup=kb)
 
 
 async def choose_poll_stats(message: types.Message, state: FSMContext):
-    """Показывает процентную статистику и возвращает в главное меню."""
-    txt = message.text.strip()
-    if txt == BACK_BTN:
+    """
+    После выбора опроса строим процентную статистику по каждому вопросу
+    и возвращаемся в главное меню.
+    """
+    text = message.text.strip()
+    if text == BACK:
         await state.finish()
         return await return_to_main_menu(message)
 
     data = await state.get_data()
     poll_ids = data.get("poll_ids", [])
-    parts = txt.split(".", 1)
+    parts = text.split(".", 1)
     if not parts[0].isdigit():
-        return await message.answer("Пожалуйста, нажмите на кнопку с номером опроса.")
+        return await message.answer("Пожалуйста, нажмите кнопку с номером опроса.")
     idx = int(parts[0]) - 1
     if idx < 0 or idx >= len(poll_ids):
         return await message.answer("Неверный номер опроса.")
 
     poll_id = poll_ids[idx]
 
-    # Формируем текст статистики
-    lines = [f"📊 Статистика опроса: #{poll_id}\n"]
+    # собираем статистику
+    lines = [f"📊 Статистика опроса: {poll_id}\n"]
     async with AsyncSessionLocal() as s:
         questions = (await s.execute(
             select(Question).where(Question.poll_id == poll_id)
@@ -75,36 +85,30 @@ async def choose_poll_stats(message: types.Message, state: FSMContext):
 
         for q in questions:
             lines.append(f"🔹 {q.question_text}")
-            uas = (await s.execute(
+            answers = (await s.execute(
                 select(UserAnswer).where(UserAnswer.question_id == q.id)
             )).scalars().all()
-            total = len(uas)
+            total = len(answers)
+
+            # варианты
             opts = (await s.execute(
                 select(Answer).where(Answer.question_id == q.id)
             )).scalars().all()
 
             if opts:
-                cnt = Counter(ua.answer_text for ua in uas)
+                cnt = Counter(a.answer_text for a in answers)
                 for o in opts:
                     c = cnt.get(o.answer_text, 0)
                     pct = (c / total * 100) if total else 0
                     lines.append(f"    • {o.answer_text}: {c}/{total} ({pct:.1f}%)")
             else:
                 lines.append(f"    • Текстовых ответов: {total}")
-            lines.append("")
+            lines.append("")  # пустая строка
 
-    # Сброс FSM и возврат в меню
+    # сбрасываем FSM и возвращаем в меню
     await state.finish()
-    # Отправляем статистику
-    await message.answer("\n".join(lines), reply_markup=ReplyKeyboardMarkup(resize_keyboard=True).add(BACK_BTN))
-    # И сразу же главное меню
-    return await _send_main_menu(message, user.role if (user := await _get_user(message.from_user.id)) else "unknown")
-
-
-async def _get_user(tg_id: int):
-    """Вспомогательный: подтягиваем юзера из БД."""
-    async with AsyncSessionLocal() as s:
-        return (await s.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
+    await message.answer("\n".join(lines), reply_markup=ReplyKeyboardRemove())
+    return await return_to_main_menu(message)
 
 
 def register_poll_statistics(dp: Dispatcher):

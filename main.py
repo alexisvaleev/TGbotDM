@@ -36,7 +36,7 @@ async def seed_groups():
 
 
 async def on_startup(dp: Dispatcher):
-    await init_db(dp)          # создаём таблицы
+    await init_db()          # создаём таблицы
     await seed_groups()        # грузим группы из .env
     await add_users_to_db(dp)  # авто-добавляем пользователей из .env
     logging.info("✅ on_startup completed")
