@@ -1,33 +1,21 @@
-# database.py
-
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
-
-# 1) Объявляем Base ДО любых моделей
-Base = declarative_base()
-
 from config import load_config
-config = load_config()
+
+Base = declarative_base()
+cfg  = load_config()
 
 DATABASE_URL = (
     f"postgresql+asyncpg://"
-    f"{config.DB_USER}:{config.DB_PASSWORD}@"
-    f"{config.DB_HOST}:{config.DB_PORT}/"
-    f"{config.DB_NAME}"
+    f"{cfg.DB_USER}:{cfg.DB_PASSWORD}"
+    f"@{cfg.DB_HOST}:{cfg.DB_PORT}/{cfg.DB_NAME}"
 )
 
-# 2) Настраиваем движок и фабрику сессий
 engine = create_async_engine(DATABASE_URL, echo=False)
-AsyncSessionLocal = sessionmaker(
-    bind=engine,
-    class_=AsyncSession,
-    expire_on_commit=False
-)
+AsyncSessionLocal = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+
 async def init_db():
-    import models
+    import models   # чтобы зарегистрировать все таблицы
     async with engine.begin() as conn:
-        # Сначала удаляем все таблицы
-        await conn.run_sync(Base.metadata.drop_all)
-        # А затем создаём заново со всеми колонками
         await conn.run_sync(Base.metadata.create_all)
-    print("✅ Все таблицы созданы")
+    print("✅ Все таблицы созданы (или уже были)")

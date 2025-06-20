@@ -1,5 +1,6 @@
 # handlers/poll_creation.py
-
+from handlers.common import BACK
+import logging
 from aiogram import types, Dispatcher
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
@@ -57,7 +58,7 @@ async def process_poll_title(message: types.Message, state: FSMContext):
 
     kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     kb.add(KeyboardButton("студенты"), KeyboardButton("учителя"), KeyboardButton("все"))
-    kb.add(BACK_BTN)
+    kb.add(BACK)
 
     await PollCreation.waiting_for_target.set()
     await message.answer("Для кого предназначен опрос?", reply_markup=kb)
@@ -78,7 +79,7 @@ async def process_poll_target(message: types.Message, state: FSMContext):
         # остаёмся в том же шаге, показываем повторно клавиатуру
         kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
         kb.add(KeyboardButton("студенты"), KeyboardButton("учителя"), KeyboardButton("все"))
-        kb.add(BACK_BTN)
+        kb.add(BACK)
         return await message.answer("⛔ Выберите вариант кнопками.", reply_markup=kb)
 
     # принятый target
@@ -93,7 +94,6 @@ async def process_question_text(message: types.Message, state: FSMContext):
     txt = message.text.strip()
     tg  = message.from_user.id
 
-    # BACK?
     if txt == BACK:
         poll_creation_buffer.pop(tg, None)
         await state.finish()
@@ -103,8 +103,8 @@ async def process_question_text(message: types.Message, state: FSMContext):
     buf.append({"text": txt, "answers": []})
 
     kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    kb.add(KeyboardButton("✅ Готово"), KeyboardButton("❌ Нет вариантов"))
-    kb.add(BACK_BTN)
+    kb.add("✅ Готово", "❌ Нет вариантов")
+    kb.add(BACK)   # ← вот здесь
 
     await PollCreation.waiting_for_answer_options.set()
     await message.answer(
@@ -132,7 +132,7 @@ async def process_answer_options(message: types.Message, state: FSMContext):
     if txt in ("✅ Готово", "❌ Нет вариантов"):
         kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
         kb.add(KeyboardButton("➕ Добавить вопрос"), KeyboardButton("✅ Завершить опрос"))
-        kb.add(BACK_BTN)
+        kb.add(BACK)
 
         await PollCreation.waiting_for_more_questions.set()
         note = "Варианты сохранены." if txt == "✅ Готово" else "Вопрос без вариантов."
@@ -198,9 +198,31 @@ async def process_more_questions(message: types.Message, state: FSMContext):
 
 
 def register_poll_creation(dp: Dispatcher):
-    dp.register_message_handler(start_poll_creation, text="➕ Создать опрос", state="*")
-    dp.register_message_handler(process_poll_title, state=PollCreation.waiting_for_title)
-    dp.register_message_handler(process_poll_target, state=PollCreation.waiting_for_target)
-    dp.register_message_handler(process_question_text, state=PollCreation.waiting_for_question_text)
-    dp.register_message_handler(process_answer_options, state=PollCreation.waiting_for_answer_options)
-    dp.register_message_handler(process_more_questions, state=PollCreation.waiting_for_more_questions)
+    # старт FSM – только когда FSM ещё не в работе
+    dp.register_message_handler(
+        start_poll_creation,
+        text="➕ Создать опрос",
+        state=None
+    )
+    # затем каждый шаг FSM по своему состоянию
+    dp.register_message_handler(
+        process_poll_title,
+        state=PollCreation.waiting_for_title
+    )
+    dp.register_message_handler(
+        process_poll_target,
+        state=PollCreation.waiting_for_target
+    )
+    dp.register_message_handler(
+        process_question_text,
+        state=PollCreation.waiting_for_question_text
+    )
+    dp.register_message_handler(
+        process_answer_options,
+        state=PollCreation.waiting_for_answer_options
+    )
+    dp.register_message_handler(
+        process_more_questions,
+        state=PollCreation.waiting_for_more_questions
+    )
+

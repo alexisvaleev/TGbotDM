@@ -1,5 +1,8 @@
-# handlers/common.py
-from aiogram.types import KeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 BACK = "🔙 Назад"
-BACK_BTN = KeyboardButton(BACK)
+BACK_BTN = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(BACK)]],
+    resize_keyboard=True,
+    one_time_keyboard=True
+)

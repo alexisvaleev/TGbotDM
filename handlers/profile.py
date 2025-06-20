@@ -1,110 +1,94 @@
-# handlers/profile.py
-
 from aiogram import types, Dispatcher
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import StatesGroup, State
-from aiogram.types import ReplyKeyboardRemove, ReplyKeyboardMarkup, KeyboardButton
 from sqlalchemy.future import select
 
 from database import AsyncSessionLocal
 from models import User, Group
 from handlers.common import BACK, BACK_BTN
-from handlers.back import return_to_main_menu
+from handlers.back   import return_to_main_menu
 
-
-class Profile(StatesGroup):
-    waiting_for_fio   = State()
-    waiting_for_group = State()
-
+class ProfileStates(StatesGroup):
+    waiting_surname    = State()
+    waiting_name       = State()
+    waiting_patronymic = State()
+    waiting_group      = State()
 
 async def ask_profile(message: types.Message, state: FSMContext):
     """
-    Шаг 1: Просим ввести ФИО (три слова).
+    Запускаем FSM-опрос для заполнения профиля.
     """
-    await Profile.waiting_for_fio.set()
-    await message.answer(
-        "Пожалуйста, введите Фамилию, Имя и Отчество (3 слова):",
-        reply_markup=ReplyKeyboardRemove()
-    )
+    await state.finish()
+    await ProfileStates.waiting_surname.set()
+    await message.answer("Введите фамилию:", reply_markup=BACK_BTN)
 
-
-async def process_fio(message: types.Message, state: FSMContext):
-    """
-    Шаг 2: Получили ФИО → сохранили в FSM и выводим клавиатуру групп.
-    """
-    text = message.text.strip()
-    if text == BACK:
+async def process_surname(message: types.Message, state: FSMContext):
+    txt = message.text.strip()
+    if txt == BACK:
         await state.finish()
         return await return_to_main_menu(message)
+    await state.update_data(surname=txt)
+    await ProfileStates.next()
+    await message.answer("Введите имя:", reply_markup=BACK_BTN)
 
-    parts = text.split()
-    if len(parts) != 3:
-        return await message.answer(
-            "Неверный формат. Введите ровно три слова для ФИО.",
-            reply_markup=ReplyKeyboardRemove()
-        )
-    surname, name, patronymic = parts
-    await state.update_data(surname=surname, name=name, patronymic=patronymic)
-
-    # Динамически строим список групп
-    async with AsyncSessionLocal() as session:
-        rows = await session.execute(select(Group).order_by(Group.name))
-        groups = rows.scalars().all()
-
-    if not groups:
+async def process_name(message: types.Message, state: FSMContext):
+    txt = message.text.strip()
+    if txt == BACK:
         await state.finish()
-        return await message.answer(
-            "Пока нет групп. Попросите админа создать группу.",
-            reply_markup=BACK_BTN
-        )
+        return await return_to_main_menu(message)
+    await state.update_data(name=txt)
+    await ProfileStates.next()
+    await message.answer("Введите отчество:", reply_markup=BACK_BTN)
 
-    kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+async def process_patronymic(message: types.Message, state: FSMContext):
+    txt = message.text.strip()
+    if txt == BACK:
+        await state.finish()
+        return await return_to_main_menu(message)
+    await state.update_data(patronymic=txt)
+    # формируем клавиатуру групп
+    async with AsyncSessionLocal() as s:
+        groups = (await s.execute(select(Group))).scalars().all()
+    kb = BACK_BTN.copy()
     for g in groups:
-        kb.add(KeyboardButton(g.name))
-    kb.add(BACK_BTN)
-
-    await Profile.waiting_for_group.set()
-    await message.answer("Выберите, пожалуйста, свою группу:", reply_markup=kb)
-
+        kb.insert(0, [g.name])
+    await ProfileStates.next()
+    await message.answer("Выберите группу:", reply_markup=kb)
 
 async def process_group(message: types.Message, state: FSMContext):
-    """
-    Шаг 3: Проверяем нажатую группу и сохраняем ФИО+группу в БД.
-    """
-    grp_name = message.text.strip()
-    if grp_name == BACK:
+    txt = message.text.strip()
+    if txt == BACK:
         await state.finish()
         return await return_to_main_menu(message)
-
-    async with AsyncSessionLocal() as session:
-        res = await session.execute(select(Group).where(Group.name == grp_name))
-        grp = res.scalar_one_or_none()
-        if not grp:
-            return await message.answer(
-                "Нажмите кнопку с названием вашей группы.",
-                reply_markup=BACK_BTN
-            )
-
-        data = await state.get_data()
-        await session.execute(
-            User.__table__
-            .update()
-            .where(User.tg_id == message.from_user.id)
-            .values(
-                surname=data["surname"],
-                name=data["name"],
-                patronymic=data["patronymic"],
-                group_id=grp.id
-            )
+    # сохраняем данные
+    data = await state.get_data()
+    async with AsyncSessionLocal() as s:
+        await s.execute(
+            select(User).where(User.tg_id==message.from_user.id)
         )
-        await session.commit()
-
+        u = User(
+            tg_id=message.from_user.id,
+            surname=data["surname"],
+            name=data["name"],
+            patronymic=data["patronymic"]
+        )
+        # находим группу
+        grp = (await s.execute(select(Group).where(Group.name==txt))).scalar_one_or_none()
+        if grp: u.group_id = grp.id
+        s.add(u)
+        await s.commit()
     await state.finish()
-    # После регистрации студента заход в меню студентской роли
+    await message.answer("✅ Профиль сохранён.", reply_markup=BACK_BTN)
     return await return_to_main_menu(message)
 
-
 def register_profile(dp: Dispatcher):
-    dp.register_message_handler(ask_profile, commands=["register"], state="*")
-    dp.register_message_handler(process_fio,   state=Profile.waiting_for_fio)
-    dp.register_message_handler(process_group, state=Profile.waiting_for_group)
+    dp.register_message_handler(ask_profile,
+                                commands=["profile"], state="*")
+    dp.register_message_handler(process_surname,
+                                state=ProfileStates.waiting_surname)
+    dp.register_message_handler(process_name,
+                                state=ProfileStates.waiting_name)
+    dp.register_message_handler(process_patronymic,
+                                state=ProfileStates.waiting_patronymic)
+    dp.register_message_handler(process_group,
+                                state=ProfileStates.waiting_group)
