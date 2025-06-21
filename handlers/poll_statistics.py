@@ -8,7 +8,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
     InputFile,
-    ReplyKeyboardRemove
+    ReplyKeyboardRemove, ReplyKeyboardMarkup
 )
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import StatesGroup, State
@@ -17,17 +17,14 @@ from sqlalchemy import func
 from sqlalchemy.future import select
 
 from database import AsyncSessionLocal
-from models import Poll, Question, Answer, Response
-from .common import BACK
-from .back import return_to_main_menu
+from models import Poll, Question, Answer, Response, User
+from .common import BACK                # у вас есть?
+from .back   import return_to_main_menu  # рисует главное меню
 
 class StatStates(StatesGroup):
     choosing_poll = State()
 
 async def start_stats(message: types.Message, state: FSMContext):
-    """
-    Показываем список опросов для статистики.
-    """
     await state.finish()
     async with AsyncSessionLocal() as s:
         polls = (await s.execute(select(Poll))).scalars().all()
@@ -44,21 +41,54 @@ async def start_stats(message: types.Message, state: FSMContext):
     kb.add(InlineKeyboardButton(BACK, callback_data="stat_back"))
 
     await StatStates.choosing_poll.set()
-    await message.answer("Выберите опрос:", reply_markup=kb)
+    await message.answer("📊 Выберите опрос:", reply_markup=kb)
 
 async def poll_stats_callback(query: types.CallbackQuery, state: FSMContext):
-    """
-    Сбор статистики по опросу и вывод текста + inline-кнопки «Скачать CSV».
-    Отображает все варианты ответов, даже с нулём выборов.
-    """
     data = query.data
+
     if data == "stat_back":
+        await query.answer()  # ack callback
+        await state.finish()  # сброс FSM
+        await query.message.delete()  # удаляем старое сообщение
+
+        # 1) Реальный ID юзера:
+        user_id = query.from_user.id
+
+        # 2) Подтягиваем роль из БД
+        async with AsyncSessionLocal() as s:
+            me = (await s.execute(
+                select(User).where(User.tg_id == user_id)
+            )).scalar_one_or_none()
+
+        role = me.role if me else None
+
+        # 3) Собираем главное меню «в лоб»
+        kb = ReplyKeyboardMarkup(resize_keyboard=True)
+        if role == "admin":
+            kb.add("👥 Пользователи", "📝 Опросы") \
+                .add("🏷️ Группы", "📊 Статистика")
+        elif role == "teacher":
+            kb.add("👥 Пользователи", "📝 Опросы") \
+                .add("🏷️ Группы", "📊 Статистика") \
+                .add("📋 Пройти опрос")
+        else:
+            kb.add("📋 Пройти опрос")
+
+        # 4) Отправляем меню в тот же чат
+        return await query.message.answer(
+            "Главное меню:", reply_markup=kb
+        )
+
+    # 1) Обработка «🔙 Назад»
+    if data == "stat_back":
+        await query.answer()
         await state.finish()
-        await query.message.delete_reply_markup()
+        await query.message.delete()
+        # возвращаем главное меню из .back:
         return await return_to_main_menu(query.message)
 
+    # 2) Собираем статистику
     poll_id = int(data.split("_", 1)[1])
-
     async with AsyncSessionLocal() as s:
         poll = (await s.execute(
             select(Poll).where(Poll.id == poll_id)
@@ -67,13 +97,12 @@ async def poll_stats_callback(query: types.CallbackQuery, state: FSMContext):
             return await query.answer("❌ Опрос не найден.")
 
         stats = []
-        questions = (await s.execute(
+        qs = (await s.execute(
             select(Question).where(Question.poll_id == poll_id)
         )).scalars().all()
 
-        for q in questions:
+        for q in qs:
             if q.question_type != "text":
-                # Берём все варианты и считаем 0, если нет ответов
                 rows = (await s.execute(
                     select(
                         Answer.answer_text,
@@ -89,41 +118,38 @@ async def poll_stats_callback(query: types.CallbackQuery, state: FSMContext):
                     [(ans, cnt, cnt / total * 100) for ans, cnt in rows]
                 ))
             else:
-                # Все текстовые ответы
-                rows = (await s.execute(
+                texts = (await s.execute(
                     select(Response.response_text)
                     .where(Response.question_id == q.id)
                 )).scalars().all()
-                stats.append((q.question_text, [(r,) for r in rows]))
+                stats.append((q.question_text, [(t,) for t in texts]))
 
-    # Формирование текстового вывода
-    lines = [f"📊 Статистика опроса «{poll.title}»\n"]
+    lines = [f"📊 Статистика «{poll.title}»\n"]
     for question, rows in stats:
         lines.append(f"<b>{question}</b>")
         for row in rows:
             if len(row) == 3:
-                ans, cnt, pct = row
-                lines.append(f"• {ans}: {cnt} ({pct:.1f}%)")
+                a, c, p = row
+                lines.append(f"• {a}: {c} ({p:.1f}%)")
             else:
-                (resp,) = row
-                lines.append(f"– {resp}")
-        lines.append("")  # пустая строка между вопросами
+                (txt,) = row
+                lines.append(f"– {txt}")
+        lines.append("")
     text = "\n".join(lines)
 
-    kb2 = InlineKeyboardMarkup().add(
-        InlineKeyboardButton("⬇️ Скачать CSV", callback_data=f"export_{poll.id}")
+    kb2 = InlineKeyboardMarkup().row(
+        InlineKeyboardButton("⬇️ Скачать CSV", callback_data=f"export_{poll.id}"),
+        InlineKeyboardButton(BACK, callback_data="stat_back")
     )
 
     await state.finish()
-    await query.message.edit_text(text, reply_markup=kb2, disable_web_page_preview=True)
+    await query.message.edit_text(text,
+                                  reply_markup=kb2,
+                                  disable_web_page_preview=True)
     await query.answer()
 
 async def export_csv(query: types.CallbackQuery):
-    """
-    Генерирует CSV (UTF-8+BOM) со всеми вариантами и процентами.
-    """
     poll_id = int(query.data.split("_", 1)[1])
-
     async with AsyncSessionLocal() as s:
         poll = (await s.execute(
             select(Poll).where(Poll.id == poll_id)
@@ -135,11 +161,11 @@ async def export_csv(query: types.CallbackQuery):
         writer = csv.writer(output)
         writer.writerow(["Вопрос", "Ответ/Ответчик", "Количество", "Процент"])
 
-        questions = (await s.execute(
+        qs = (await s.execute(
             select(Question).where(Question.poll_id == poll_id)
         )).scalars().all()
 
-        for q in questions:
+        for q in qs:
             if q.question_type != "text":
                 rows = (await s.execute(
                     select(
@@ -162,10 +188,9 @@ async def export_csv(query: types.CallbackQuery):
                 if not text_rows:
                     writer.writerow([q.question_text, "-", "-", "-"])
                 else:
-                    for user_id, resp in text_rows:
-                        writer.writerow([q.question_text, user_id, resp, "-"])
+                    for uid, txt in text_rows:
+                        writer.writerow([q.question_text, uid, txt, "-"])
 
-    # Добавляем BOM для корректного открытия в Excel
     bom = '\ufeff'.encode('utf-8')
     bio = io.BytesIO(bom + output.getvalue().encode('utf-8'))
     bio.name = f"{poll.title}.csv"
@@ -182,13 +207,10 @@ def register_poll_statistics(dp: Dispatcher):
     dp.register_callback_query_handler(
         poll_stats_callback,
         lambda c: c.data.startswith("stat_"),
-        state=StatStates.choosing_poll
-    )
-    dp.register_callback_query_handler(
-        poll_stats_callback,
-        lambda c: c.data == "stat_back"
+        state="*"
     )
     dp.register_callback_query_handler(
         export_csv,
-        lambda c: c.data.startswith("export_")
+        lambda c: c.data.startswith("export_"),
+        state="*"
     )
